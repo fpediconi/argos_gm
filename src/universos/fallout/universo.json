@@ -1,0 +1,169 @@
+{
+  "id": "fallout",
+  "nombre": "Fallout",
+  "atributos": [
+    { "id": "FUE", "nombre": "Fuerza", "desc": "Golpear más fuerte y cargar más peso." },
+    { "id": "PER", "nombre": "Percepción", "desc": "Detectar peligros y detalles." },
+    { "id": "RES", "nombre": "Resistencia", "desc": "Soportar daño y sobrevivir más tiempo." },
+    { "id": "CAR", "nombre": "Carisma", "desc": "Convencer, negociar y liderar." },
+    { "id": "INT", "nombre": "Inteligencia", "desc": "Reparar, investigar y resolver problemas." },
+    { "id": "AGI", "nombre": "Agilidad", "desc": "Velocidad, reflejos y precisión." },
+    { "id": "SUE", "nombre": "Suerte", "desc": "Cuando todo sale mejor de lo esperado." }
+  ],
+  "grupos": [
+    { "id": "combate", "nombre": "Combate" },
+    { "id": "exploracion", "nombre": "Exploración y técnica" },
+    { "id": "supervivencia", "nombre": "Supervivencia y sociales" }
+  ],
+  "habilidades": [
+    { "id": "armas_cc", "nombre": "Armas C/C", "corto": "C/C", "grupo": "combate", "attr": "FUE", "desc": "Bates, cuchillos, porras y armas cuerpo a cuerpo." },
+    { "id": "armas_energia", "nombre": "Armas de energía", "corto": "Energía", "grupo": "combate", "attr": "PER", "desc": "Láseres, plasma y otras armas energéticas." },
+    { "id": "armas_grandes", "nombre": "Armas grandes", "corto": "Grandes", "grupo": "combate", "attr": "RES", "desc": "Ametralladoras, lanzacohetes, Gatling y más." },
+    { "id": "armas_pequenas", "nombre": "Armas pequeñas", "corto": "Pequeñas", "grupo": "combate", "attr": "AGI", "desc": "Pistolas, rifles y escopetas." },
+    { "id": "desarmado", "nombre": "Desarmado", "corto": "Desarmado", "grupo": "combate", "attr": "FUE", "desc": "Tus puños también cuentan." },
+    { "id": "explosivos", "nombre": "Explosivos", "corto": "Explosivos", "grupo": "combate", "attr": "PER", "desc": "Granadas, minas, Molotov y dinamita." },
+    { "id": "lanzar", "nombre": "Lanzar", "corto": "Lanzar", "grupo": "combate", "attr": "AGI", "desc": "Cuchillos, jabalinas y armas improvisadas." },
+    { "id": "atletismo", "nombre": "Atletismo", "corto": "Atletismo", "grupo": "exploracion", "attr": "FUE", "desc": "Correr, saltar, trepar, nadar o mover peso." },
+    { "id": "cerraduras", "nombre": "Cerraduras", "corto": "Cerraduras", "grupo": "exploracion", "attr": "PER", "desc": "Forzar cerraduras para entrar donde otros no pueden." },
+    { "id": "ciencias", "nombre": "Ciencias", "corto": "Ciencias", "grupo": "exploracion", "attr": "INT", "desc": "Ordenadores, química, robótica y otras tecnologías." },
+    { "id": "medicina", "nombre": "Medicina", "corto": "Medicina", "grupo": "exploracion", "attr": "INT", "desc": "Primeros auxilios, medicamentos, cirugías y radiación." },
+    { "id": "pilotar", "nombre": "Pilotar", "corto": "Pilotar", "grupo": "exploracion", "attr": "PER", "desc": "Conducir vehículos terrestres, aéreos o acuáticos." },
+    { "id": "reparacion", "nombre": "Reparación", "corto": "Reparación", "grupo": "exploracion", "attr": "INT", "desc": "Arreglar, modificar y fabricar armas, armaduras y equipo." },
+    { "id": "sigilo", "nombre": "Sigilo", "corto": "Sigilo", "grupo": "supervivencia", "attr": "AGI", "desc": "Moverte sin hacer ruido y permanecer oculto." },
+    { "id": "supervivencia", "nombre": "Supervivencia", "corto": "Superv.", "grupo": "supervivencia", "attr": "RES", "desc": "Forrajear, cocinar, pescar, construir refugios y resistir el Yermo." },
+    { "id": "conversacion", "nombre": "Conversación", "corto": "Conversac.", "grupo": "supervivencia", "attr": "CAR", "desc": "Convencer, inspirar... o mentir sin que te descubran." },
+    { "id": "trueque", "nombre": "Trueque", "corto": "Trueque", "grupo": "supervivencia", "attr": "CAR", "desc": "Comprar, vender y conseguir mejores tratos." }
+  ],
+  "origenes": [
+    {
+      "id": "refugio", "nombre": "Habitante de Refugio", "emoji": "🧑‍🚀",
+      "desc": "Criado bajo tierra, educado y algo ingenuo. Nunca vio el cielo hasta hace poco.",
+      "atributos": { "INT": 1, "CAR": 1 }, "habilidades": { "ciencias": 1 },
+      "saludExtra": 0, "chapas": 30,
+      "kit": ["traje_refugio", "estimulante", "estimulante"],
+      "rasgo": "Pip-Boy de muñeca y conocimientos de tecnología antigua; ingenuo con el Yermo."
+    },
+    {
+      "id": "superviviente", "nombre": "Superviviente", "emoji": "🛠️",
+      "desc": "Nació y creció en el Yermo. Sabe arreglárselas con casi nada.",
+      "atributos": { "RES": 1, "PER": 1 }, "habilidades": { "supervivencia": 1 },
+      "saludExtra": 1, "chapas": 50,
+      "kit": ["ropa_cuero", "estimulante", "comida", "comida"],
+      "rasgo": "Conoce el terreno, los peligros comunes y los precios reales."
+    },
+    {
+      "id": "hermandad", "nombre": "Iniciado de la Hermandad", "emoji": "⚙️",
+      "desc": "Aprendiz de una orden que colecciona tecnología. Disciplinado y dogmático.",
+      "atributos": { "FUE": 1, "INT": 1 }, "habilidades": { "reparacion": 1 },
+      "saludExtra": 0, "chapas": 20,
+      "kit": ["armadura_metal", "estimulante"],
+      "rasgo": "Entrenado por la Hermandad; los suyos lo reconocen, el resto lo mira con recelo."
+    },
+    {
+      "id": "necrotico", "nombre": "Necrótico", "emoji": "☢️",
+      "desc": "Ghoul: la radiación lo cambió y lo mantiene con vida mucho más de lo natural.",
+      "atributos": { "RES": 1, "SUE": 1 }, "habilidades": { "supervivencia": 1 },
+      "saludExtra": 0, "chapas": 40, "radInmune": true,
+      "kit": ["ropa_cuero", "comida"],
+      "rasgo": "Inmune a la radiación. Muchos lo temen o lo desprecian; vio caer el mundo viejo."
+    },
+    {
+      "id": "supermutante", "nombre": "Supermutante", "emoji": "💪",
+      "desc": "Enorme, fuerte y, contra el prejuicio, capaz de pensar. Lo temen a primera vista.",
+      "atributos": { "FUE": 2, "RES": 1 }, "habilidades": { "armas_grandes": 1 },
+      "saludExtra": 2, "chapas": 10, "radInmune": true,
+      "kit": ["ropa_cuero", "comida", "comida"],
+      "rasgo": "Inmune a la radiación y muy resistente. La gente desconfía de él y le cuesta pasar desapercibido."
+    },
+    {
+      "id": "robot", "nombre": "Mister Handy", "emoji": "🤖",
+      "desc": "Robot doméstico con tres brazos, sentido del humor propio y cero necesidad de comer.",
+      "atributos": { "INT": 1, "PER": 1 }, "habilidades": { "reparacion": 1 },
+      "saludExtra": 0, "chapas": 20, "radInmune": true, "robot": true,
+      "kit": ["kit_reparacion", "kit_reparacion"],
+      "rasgo": "Robot: no come ni sufre radiación; se repara con Reparación, no con Medicina."
+    }
+  ],
+  "arquetipos": [
+    {
+      "id": "soldado", "nombre": "Soldado", "emoji": "🔫",
+      "atributos": { "FUE": 6, "PER": 7, "RES": 7, "CAR": 4, "INT": 5, "AGI": 7, "SUE": 4 },
+      "especialidades": ["armas_pequenas", "armas_grandes", "atletismo"],
+      "puntos": { "armas_pequenas": 1, "atletismo": 1, "desarmado": 1, "explosivos": 1, "supervivencia": 2, "sigilo": 1, "medicina": 1 }
+    },
+    {
+      "id": "explorador", "nombre": "Explorador", "emoji": "🧭",
+      "atributos": { "FUE": 5, "PER": 8, "RES": 6, "CAR": 4, "INT": 5, "AGI": 7, "SUE": 5 },
+      "especialidades": ["supervivencia", "sigilo", "armas_pequenas"],
+      "puntos": { "supervivencia": 1, "sigilo": 1, "armas_pequenas": 1, "atletismo": 2, "cerraduras": 1, "lanzar": 1, "pilotar": 1 }
+    },
+    {
+      "id": "cara", "nombre": "Cara de Póker", "emoji": "🗣️",
+      "atributos": { "FUE": 4, "PER": 6, "RES": 5, "CAR": 8, "INT": 6, "AGI": 5, "SUE": 6 },
+      "especialidades": ["conversacion", "trueque", "sigilo"],
+      "puntos": { "conversacion": 1, "trueque": 1, "sigilo": 1, "armas_pequenas": 2, "cerraduras": 1, "supervivencia": 1, "medicina": 1 }
+    },
+    {
+      "id": "tecnico", "nombre": "Técnico", "emoji": "🔧",
+      "atributos": { "FUE": 4, "PER": 6, "RES": 5, "CAR": 4, "INT": 8, "AGI": 6, "SUE": 7 },
+      "especialidades": ["reparacion", "ciencias", "cerraduras"],
+      "puntos": { "reparacion": 1, "ciencias": 1, "cerraduras": 1, "armas_energia": 2, "pilotar": 1, "explosivos": 1, "trueque": 1 }
+    },
+    {
+      "id": "medico", "nombre": "Médico de campo", "emoji": "🩹",
+      "atributos": { "FUE": 4, "PER": 6, "RES": 6, "CAR": 6, "INT": 8, "AGI": 5, "SUE": 5 },
+      "especialidades": ["medicina", "ciencias", "conversacion"],
+      "puntos": { "medicina": 1, "ciencias": 1, "conversacion": 1, "armas_pequenas": 2, "supervivencia": 2, "trueque": 1 }
+    },
+    {
+      "id": "sigiloso", "nombre": "Sombra", "emoji": "🥷",
+      "atributos": { "FUE": 4, "PER": 7, "RES": 5, "CAR": 5, "INT": 6, "AGI": 8, "SUE": 5 },
+      "especialidades": ["sigilo", "cerraduras", "lanzar"],
+      "puntos": { "sigilo": 1, "cerraduras": 1, "lanzar": 1, "armas_pequenas": 2, "atletismo": 1, "desarmado": 1, "conversacion": 1 }
+    }
+  ],
+  "armas": [
+    { "id": "pistola_10mm", "nombre": "Pistola 10 mm", "habilidad": "armas_pequenas", "danio": 4, "rasgo": "" },
+    { "id": "escopeta", "nombre": "Escopeta recortada", "habilidad": "armas_pequenas", "danio": 6, "rasgo": "Corto alcance" },
+    { "id": "rifle_caza", "nombre": "Rifle de caza", "habilidad": "armas_pequenas", "danio": 5, "rasgo": "" },
+    { "id": "rifle_laser", "nombre": "Pistola láser", "habilidad": "armas_energia", "danio": 5, "rasgo": "Ignora 1 de protección", "perfora": 1 },
+    { "id": "bate_clavos", "nombre": "Bate con clavos", "habilidad": "armas_cc", "danio": 4, "rasgo": "" },
+    { "id": "machete", "nombre": "Machete", "habilidad": "armas_cc", "danio": 4, "rasgo": "" },
+    { "id": "punos", "nombre": "Puños", "habilidad": "desarmado", "danio": 2, "rasgo": "" },
+    { "id": "cuchillos_arroj", "nombre": "Cuchillos arrojadizos", "habilidad": "lanzar", "danio": 3, "rasgo": "" },
+    { "id": "minigun", "nombre": "Minigun", "habilidad": "armas_grandes", "danio": 7, "rasgo": "Pesada" },
+    { "id": "granada", "nombre": "Granada", "habilidad": "explosivos", "danio": 5, "rasgo": "Golpea a todos los enemigos", "area": true, "consumible": true }
+  ],
+  "objetos": [
+    { "id": "estimulante", "nombre": "Estimulante", "efecto": "cura", "valor": 4, "desc": "Cura 4 de salud." },
+    { "id": "radaway", "nombre": "RadAway", "efecto": "rads", "valor": 3, "desc": "Quita 3 puntos de radiación." },
+    { "id": "comida", "nombre": "Comida enlatada", "efecto": "cura", "valor": 1, "desc": "Cura 1 de salud." },
+    { "id": "kit_reparacion", "nombre": "Kit de reparación", "efecto": "cura", "valor": 3, "desc": "Repara 3 de salud (robots)." },
+    { "id": "traje_refugio", "nombre": "Traje de Refugio", "efecto": "armadura", "valor": 1, "desc": "Protección 1." },
+    { "id": "ropa_cuero", "nombre": "Ropa de cuero", "efecto": "armadura", "valor": 1, "desc": "Protección 1." },
+    { "id": "armadura_metal", "nombre": "Armadura de metal", "efecto": "armadura", "valor": 2, "desc": "Protección 2." },
+    { "id": "llave_inglesa", "nombre": "Llave inglesa", "efecto": "ninguno", "valor": 0, "desc": "Herramienta." },
+    { "id": "ganzuas", "nombre": "Ganzúas", "efecto": "ninguno", "valor": 0, "desc": "Sirven para Cerraduras." },
+    { "id": "linterna", "nombre": "Linterna", "efecto": "ninguno", "valor": 0, "desc": "Ilumina lo oscuro." }
+  ],
+  "bestiario": [
+    { "id": "saqueador", "nombre": "Saqueador", "salud": 8, "tn": 9, "danio": 3, "prot": 0, "rasgo": "" },
+    { "id": "rata_topo", "nombre": "Rata topo", "salud": 6, "tn": 8, "danio": 2, "prot": 0, "rasgo": "Enjambre" },
+    { "id": "ghoul_salvaje", "nombre": "Necrótico salvaje", "salud": 10, "tn": 9, "danio": 3, "prot": 1, "rasgo": "Radiactivo" },
+    { "id": "robot_asaltante", "nombre": "Robot asaltante", "salud": 14, "tn": 11, "danio": 4, "prot": 2, "rasgo": "Vulnerable a Ciencias" },
+    { "id": "lobo_marino", "nombre": "Lobo marino mutante", "salud": 12, "tn": 10, "danio": 4, "prot": 1, "rasgo": "Anfibio" },
+    { "id": "mutante_bruto", "nombre": "Mutante bruto", "salud": 18, "tn": 10, "danio": 5, "prot": 1, "rasgo": "Pega fuerte" },
+    { "id": "perro_salvaje", "nombre": "Perro salvaje", "salud": 5, "tn": 9, "danio": 2, "prot": 0, "rasgo": "Rápido" }
+  ],
+  "escenarios": [
+    { "id": "yermo", "nombre": "Yermo clásico", "emoji": "🏜️", "semilla": "Yermo postnuclear genérico: ruinas de ciudades, refugios sellados, caravanas, saqueadores, facciones en tensión y tecnología antigua." },
+    { "id": "costa", "nombre": "Costa Atlántica (Mar del Plata post-nuclear)", "emoji": "🌊", "semilla": "Mar del Plata después de la guerra: la Rambla convertida en muralla, el puerto lleno de barcos herrumbrados y lobos marinos mutantes, un casino subterráneo donde se apuestan chapas y favores, el Torreón como puesto de vigía, mate radiactivo, humor local rioplatense." },
+    { "id": "refugio88", "nombre": "Refugio 88 (aventura de refugio)", "emoji": "🚪", "semilla": "Un refugio subterráneo cuyo sistema falló: pisos sellados, robots enloquecidos, un experimento oculto de los supervisores y sobrevivientes divididos." },
+    { "id": "sorpresa", "nombre": "Sorpréndanme", "emoji": "🎰", "semilla": "El DJ inventa un escenario original de Fallout con un gancho fuerte y sorprendente." }
+  ],
+  "tonos": [
+    { "id": "oscuro", "nombre": "Serio y oscuro", "prompt": "serio, sombrío, con tensión y consecuencias reales" },
+    { "id": "humor", "nombre": "Aventura con humor negro", "prompt": "aventurero con humor negro y ironía al estilo Fallout, sin perder tensión" },
+    { "id": "absurdo", "nombre": "Absurdo y delirante", "prompt": "absurdo, delirante y desbordado de ocurrencias, pero coherente con el mundo" }
+  ]
+}

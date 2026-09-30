@@ -1,0 +1,24 @@
+{
+  "name": "argos-dj",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Argos DJ — Game Master de rol por Telegram (Fallout). Motor de reglas + narrador con IA.",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "simular": "tsx scripts/simular.ts",
+    "probar-ia": "tsx scripts/probar-ia.ts",
+    "verificar": "npm run typecheck && npm test && npm run simular -- --silencioso"
+  },
+  "dependencies": {
+    "tsx": "^4.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.0"
+  }
+}
