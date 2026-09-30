@@ -2,6 +2,7 @@ import type { Combate, EnemigoEnCombate, Personaje, Universo, TiradaResuelta, Pe
 import type { Rng } from './dados.js'
 import { armaPrincipal, defensaDe, proteccionDe, resolverPrueba, type Extra } from './reglas.js'
 import { contarExitos, tirarDados } from './dados.js'
+import { barraVida, dadosTexto } from '../util.js'
 import { esCaido, saludMaxEfectiva, quitarItem, tieneItem } from './personaje.js'
 
 export const MAX_ENEMIGOS = 6
@@ -74,8 +75,10 @@ export function ataqueJugador(u: Universo, p: Personaje, c: Combate, objetivoUid
   const objetivos = arma.area ? vivos(c) : [vivos(c).find((e) => e.uid === objetivoUid) ?? vivos(c)[0]].filter(Boolean)
   const muertos: string[] = []
   let danioTotal = 0
+  const blanco = arma.area ? 'a todos' : `a ${objetivos[0]?.nombre ?? 'nadie'}`
+  const dados = dadosTexto(tirada.dados, tirada.tn)
   if (!tirada.exito) {
-    const linea = `🔫 ${nombre} ataca con ${arma.nombre}: falla ❌ (dados ${tirada.dados.join('·')} vs TN ${tirada.tn})${tirada.complicaciones ? ' ⚠️ ¡Complicación!' : ''}`
+    const linea = `🔫 <b>${nombre}</b> ataca ${blanco} con ${arma.nombre}\n${dados} → ❌ <b>Falla</b>${tirada.complicaciones ? ' ⚠️ ¡y algo sale mal!' : ''}`
     return { tirada, linea, danio: 0, muertos, complicacion: tirada.complicaciones > 0 }
   }
   const partes: string[] = []
@@ -84,10 +87,10 @@ export function ataqueJugador(u: Universo, p: Personaje, c: Combate, objetivoUid
     const d = Math.max(1, arma.danio + tirada.impulso - prot)
     e.salud = Math.max(0, e.salud - d)
     danioTotal += d
-    partes.push(`${e.nombre} −${d} (${e.salud}/${e.salud_max})`)
+    partes.push(e.salud <= 0 ? `💀 ${e.nombre} cae (−${d})` : `${e.nombre} −${d} ❤️ ${barraVida(e.salud, e.salud_max)} ${e.salud}/${e.salud_max}`)
     if (e.salud <= 0) muertos.push(e.nombre)
   }
-  const linea = `🔫 ${nombre} ataca con ${arma.nombre}: ${tirada.exitos} éxito${tirada.exitos === 1 ? '' : 's'} ✅ → ${partes.join(', ')}${muertos.length ? ' 💀 ' + muertos.join(', ') : ''}${tirada.complicaciones ? ' ⚠️ ¡Complicación!' : ''}`
+  const linea = `🔫 <b>${nombre}</b> ataca ${blanco} con ${arma.nombre}\n${dados} → ✅ <b>Acierta</b>: ${partes.join(' · ')}${tirada.complicaciones ? ' ⚠️ ¡pero algo sale mal!' : ''}`
   return { tirada, linea, danio: danioTotal, muertos, complicacion: tirada.complicaciones > 0 }
 }
 
@@ -106,9 +109,9 @@ export function turnoEnemigos(u: Universo, personajes: Personaje[], c: Combate, 
       const prot = proteccionDe(p, u)
       const d = Math.max(1, e.danio + impulso - prot)
       const cayo = danioAJugador(p, d)
-      lineas.push(`💥 ${e.nombre} golpea a ${p.ficha.nombre}: −${d} (${p.salud}/${saludMaxEfectiva(p)})${cayo ? ' 🩸 ¡queda CAÍDO!' : ''}`)
+      lineas.push(`💥 ${e.nombre} le pega a <b>${p.ficha.nombre}</b>: −${d} ❤️ ${barraVida(p.salud, saludMaxEfectiva(p))} ${p.salud}/${saludMaxEfectiva(p)}${cayo ? ' 🩸 <b>¡queda caído!</b>' : ''}`)
     } else {
-      lineas.push(`🛡️ ${e.nombre} ataca a ${p.ficha.nombre} y falla.`)
+      lineas.push(`🛡️ ${e.nombre} ataca a ${p.ficha.nombre} y no le acierta.`)
     }
   }
   for (const p of personajes) p.cubierto = false
@@ -185,4 +188,37 @@ export function resolverCaidos(
     }
   }
   return lineas
+}
+
+/**
+ * Golpe creativo (acción libre en combate: "le parto el cráneo con la llave inglesa").
+ * La tirada ya la resolvió el jugador con la dificultad que puso el DJ; más difícil, más daño si sale.
+ */
+export function golpeCreativo(
+  u: Universo, p: Personaje, tirada: TiradaResuelta,
+  blanco: { tipo: 'enemigo'; e: EnemigoEnCombate } | { tipo: 'pj'; pj: Personaje },
+): ResultadoAtaque {
+  const arma = armaPrincipal(p, u)
+  const pedido = tirada.pedido
+  const nombreBlanco = blanco.tipo === 'enemigo' ? blanco.e.nombre : blanco.pj.ficha.nombre
+  const muertos: string[] = []
+  if (!tirada.exito) {
+    return { tirada, linea: `💬 ${p.ficha.nombre} intenta ${pedido.motivo.toLowerCase()} contra ${nombreBlanco}: ❌ no sale${tirada.complicaciones ? ' ⚠️ ¡y algo sale mal!' : ''}`, danio: 0, muertos, complicacion: tirada.complicaciones > 0 }
+  }
+  const base = arma.danio + tirada.impulso + (pedido.dificultad - 1) * 2
+  let d: number
+  let parte: string
+  if (blanco.tipo === 'enemigo') {
+    const e = blanco.e
+    d = Math.max(1, base - Math.max(0, e.prot - (arma.perfora ?? 0)))
+    e.salud = Math.max(0, e.salud - d)
+    if (e.salud <= 0) muertos.push(e.nombre)
+    parte = e.salud <= 0 ? `💀 ${nombreBlanco} cae (−${d})` : `${nombreBlanco} −${d} ❤️ ${barraVida(e.salud, e.salud_max)} ${e.salud}/${e.salud_max}`
+  } else {
+    const q = blanco.pj
+    d = Math.max(1, base - proteccionDe(q, u))
+    const cayo = danioAJugador(q, d)
+    parte = `${nombreBlanco} −${d} ❤️ ${barraVida(q.salud, saludMaxEfectiva(q))} ${q.salud}/${saludMaxEfectiva(q)}${cayo ? ' 🩸 ¡queda caído!' : ''}`
+  }
+  return { tirada, linea: `💬 ${p.ficha.nombre}: ${pedido.motivo} → ✅ ${parte}${tirada.complicaciones ? ' ⚠️ ¡pero algo sale mal!' : ''}`, danio: d, muertos, complicacion: tirada.complicaciones > 0 }
 }

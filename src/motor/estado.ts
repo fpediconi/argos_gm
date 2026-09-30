@@ -5,7 +5,7 @@ import { cargaMax } from './reglas.js'
 /** Cambios que la IA puede PROPONER. El motor los valida y aplica; lo que no cumple las reglas se rechaza. */
 export interface Cambios {
   salud?: { pj: string; delta: number; motivo?: string }[]
-  objetos?: { pj: string; item: string; delta: number }[]
+  objetos?: { pj: string; item?: string; nombre_libre?: string; delta: number }[]
   chapas?: { pj: string; delta: number; motivo?: string }[]
   rads?: { pj: string; delta: number }[]
   condiciones?: { pj: string; condicion: string; accion: 'poner' | 'quitar' }[]
@@ -18,7 +18,10 @@ export interface Cambios {
 }
 
 export interface ResultadoCambios {
+  /** Lo que ven los jugadores (en lenguaje natural). */
   aplicados: string[]
+  /** Cambios que solo conoce el DJ (relojes): cuentan como "pasó algo" pero no se muestran. */
+  internos: string[]
   rechazados: string[]
   relojesLlenos: string[]
   caidos: string[]
@@ -27,6 +30,19 @@ export interface ResultadoCambios {
 const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n))
 const slug = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24)
 const RESERVADAS = ['caido', 'muerto']
+
+/** "una_crecida_toxica" → "Una crecida tóxica" (sin tildes, pero legible). */
+export function humano(id: string): string {
+  const t = id.replace(/[_-]+/g, ' ').trim()
+  return t.charAt(0).toUpperCase() + t.slice(1)
+}
+
+const mayus = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+export function fraseEstadoNpc(nombre: string, estado: EstadoNpc): string {
+  const n = mayus(nombre)
+  return { vivo: `${n} sigue con vida`, herido: `${n} queda herido`, huido: `${n} se escapa`, muerto: `💀 ${n} muere` }[estado]
+}
 
 const ESTADOS_NPC: EstadoNpc[] = ['vivo', 'herido', 'muerto', 'huido']
 export const MAX_MISIONES_ACTIVAS = 4
@@ -41,7 +57,7 @@ export function buscarPj(pjs: Personaje[], ref: string): Personaje | undefined {
 }
 
 export function aplicarCambios(u: Universo, mundo: Mundo, pjs: Personaje[], c: Cambios | undefined, opciones: { enCombate: boolean }): ResultadoCambios {
-  const res: ResultadoCambios = { aplicados: [], rechazados: [], relojesLlenos: [], caidos: [] }
+  const res: ResultadoCambios = { aplicados: [], internos: [], rechazados: [], relojesLlenos: [], caidos: [] }
   if (!c || typeof c !== 'object') return res
   const origen = (p: Personaje) => u.origenes.find((o) => o.id === p.ficha.origen)
 
@@ -62,15 +78,28 @@ export function aplicarCambios(u: Universo, mundo: Mundo, pjs: Personaje[], c: C
     const p = buscarPj(pjs, o.pj)
     if (!p) { res.rechazados.push(`objeto: personaje ${o.pj} inexistente`); continue }
     const d = clamp(Math.trunc(Number(o.delta) || 0), -3, 2)
-    const def = u.objetos.find((x) => x.id === o.item) ?? u.armas.find((x) => x.id === o.item)
+    // Objeto narrativo (fuera del catálogo): va a la mochila con su nombre, sin efecto de reglas.
+    const libre = !o.item && typeof o.nombre_libre === 'string' ? o.nombre_libre.replace(/[<>:]/g, ' ').trim().slice(0, 40) : ''
+    if (libre) {
+      const id = `libre:${libre}`
+      if (d > 0) {
+        if (cantidadItems(p) + d > cargaMax(p.ficha)) { res.rechazados.push(`objeto: ${p.ficha.nombre} no tiene lugar para ${libre}`); continue }
+        darItem(p, id, d)
+        res.aplicados.push(`${p.ficha.nombre} recibe ${libre}`)
+      } else if (d < 0 && tieneItem(p, id) && quitarItem(p, id, -d)) res.aplicados.push(`${p.ficha.nombre} pierde ${libre}`)
+      continue
+    }
+    if (!o.item) { res.rechazados.push('objeto: falta el id o el nombre_libre'); continue }
+    const item = o.item
+    const def = u.objetos.find((x) => x.id === item) ?? u.armas.find((x) => x.id === item)
     if (d > 0) {
       if (!def) { res.rechazados.push(`objeto: "${o.item}" no existe en el catálogo`); continue }
       if (cantidadItems(p) + d > cargaMax(p.ficha)) { res.rechazados.push(`objeto: ${p.ficha.nombre} no tiene lugar para ${def.nombre}`); continue }
       darItem(p, def.id, d)
       res.aplicados.push(`${p.ficha.nombre} recibe ${def.nombre}${d > 1 ? ' ×' + d : ''}`)
     } else if (d < 0) {
-      if (!tieneItem(p, o.item) || !quitarItem(p, o.item, -d)) { res.rechazados.push(`objeto: ${p.ficha.nombre} no tiene ${o.item}`); continue }
-      res.aplicados.push(`${p.ficha.nombre} pierde ${def?.nombre ?? o.item}`)
+      if (!tieneItem(p, item) || !quitarItem(p, item, -d)) { res.rechazados.push(`objeto: ${p.ficha.nombre} no tiene ${item}`); continue }
+      res.aplicados.push(`${p.ficha.nombre} pierde ${def?.nombre ?? item}`)
     }
   }
 
@@ -112,15 +141,15 @@ export function aplicarCambios(u: Universo, mundo: Mundo, pjs: Personaje[], c: C
     let reloj: Reloj | undefined = mundo.relojes.find((x) => x.id === id)
     if (!reloj) {
       if (mundo.relojes.length >= 3) { res.rechazados.push('relojes: máximo 3 a la vez'); continue }
-      reloj = { id, nombre: (r.nombre ?? id).slice(0, 40), segmentos: clamp(Math.trunc(r.segmentos ?? 6), 3, 8), llenos: 0 }
+      reloj = { id, nombre: (r.nombre?.trim() || humano(id)).slice(0, 40), segmentos: clamp(Math.trunc(r.segmentos ?? 6), 3, 8), llenos: 0 }
       mundo.relojes.push(reloj)
-      res.aplicados.push(`nuevo reloj: ${reloj.nombre} (0/${reloj.segmentos})`)
+      res.internos.push(`nuevo reloj: ${reloj.nombre} (0/${reloj.segmentos})`)
     }
     const d = clamp(Math.trunc(Number(r.delta) || 0), -2, 2)
     if (d !== 0) {
       const antes = reloj.llenos
       reloj.llenos = clamp(reloj.llenos + d, 0, reloj.segmentos)
-      if (reloj.llenos !== antes) res.aplicados.push(`reloj ${reloj.nombre}: ${reloj.llenos}/${reloj.segmentos}`)
+      if (reloj.llenos !== antes) res.internos.push(`reloj ${reloj.nombre}: ${reloj.llenos}/${reloj.segmentos}`)
       if (reloj.llenos >= reloj.segmentos && antes < reloj.segmentos) res.relojesLlenos.push(reloj.nombre)
     }
   }
@@ -162,10 +191,10 @@ export function aplicarCambios(u: Universo, mundo: Mundo, pjs: Personaje[], c: C
       if (estado && estado !== (ex.estado ?? 'vivo')) {
         ex.estado = estado
         if (estado === 'muerto') marcarNpcMuerto(mundo, ex.nombre, res)
-        else res.aplicados.push(`${ex.nombre}: ${estado}`)
+        else res.aplicados.push(fraseEstadoNpc(ex.nombre, estado))
       }
     } else {
-      const nuevo = { id, nombre, actitud: (n.actitud ?? 'neutral').slice(0, 30), nota: (n.nota ?? '').slice(0, 80), estado: estado ?? 'vivo' }
+      const nuevo = { id, nombre: mayus(nombre), actitud: (n.actitud ?? 'neutral').slice(0, 30), nota: (n.nota ?? '').slice(0, 80), estado: estado ?? 'vivo' }
       mundo.npcs.push(nuevo)
       if (estado === 'muerto') marcarNpcMuerto(mundo, nombre, res)
       // Se descarta primero a los muertos o idos, después al más viejo.
@@ -186,7 +215,7 @@ export function marcarNpcMuerto(mundo: Mundo, nombre: string, res?: Pick<Resulta
   mundo.muertos = mundo.muertos ?? []
   if (!esNpcMuerto(mundo, nombre)) {
     mundo.muertos.push(nombre)
-    res?.aplicados.push(`💀 ${nombre} muere`)
+    res?.aplicados.push(fraseEstadoNpc(nombre, 'muerto'))
   }
   const n = mundo.npcs.find((x) => x.nombre.toLowerCase() === nombre.toLowerCase())
   if (n) n.estado = 'muerto'

@@ -138,8 +138,15 @@ export type Paso =
   | { tipo: 'confirmando'; jugadorId: number; que: 'muerte' | 'abandono' }
 
 /** Qué quiere hacer el jugador cuando la acción es drástica (lo decide un clasificador barato). */
-export type TipoIntencion = 'muerte_propia' | 'matar' | 'abandonar' | 'traicion' | 'otra'
-export interface Intencion { tipo: TipoIntencion; objetivo?: string }
+export type TipoIntencion = 'muerte_propia' | 'matar' | 'abandonar' | 'traicion' | 'ataque' | 'otra'
+export interface Intencion {
+  tipo: TipoIntencion
+  objetivo?: string
+  /** Ataque creativo en combate: la prueba que propone el DJ para lo que se intenta. */
+  prueba?: PedidoTirada
+  /** Blanco resuelto por el motor (uid de enemigo o id de personaje). */
+  blanco?: { tipo: 'enemigo'; uid: string } | { tipo: 'pj'; id: number }
+}
 
 export interface Jugador {
   id: number
@@ -205,6 +212,8 @@ export interface Mundo {
   /** Ideas del DJ para el próximo turno (se muestran a pedido). */
   ideas?: string[]
   votacion?: VotacionGrupo | null
+  /** Mensajes que fijó el bot (solo deberían quedar el tablero y el turno actual). */
+  fijados?: number[]
   /** Decisión drástica esperando que el jugador confirme con botones. */
   confirmacion?: Confirmacion | null
 }

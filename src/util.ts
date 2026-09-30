@@ -55,3 +55,33 @@ export function inicioDelDia(ms: number, tzMin: number): number {
   const local = ms + tzMin * 60_000
   return local - (local % 86_400_000) - tzMin * 60_000
 }
+
+/** Barra de vida corta (5 segmentos) para las tarjetas de combate. */
+export function barraVida(salud: number, max: number, segmentos = 5): string {
+  const llenos = max > 0 && salud > 0 ? Math.max(1, Math.min(segmentos, Math.round((salud / max) * segmentos))) : 0
+  return '▰'.repeat(llenos) + '▱'.repeat(segmentos - llenos)
+}
+
+/** Dados con su resultado al lado: "🎲 4 ✅  🎲 12 ❌". */
+export function dadosTexto(dados: number[], tn: number): string {
+  return dados.map((d) => `🎲 ${d} ${d <= tn ? '✅' : '❌'}${d === 20 ? '⚠️' : ''}`).join('  ')
+}
+
+/**
+ * Texto de la IA → HTML de Telegram: escapa y convierte el markdown que a veces se le escapa
+ * (**negrita**, *cursiva*, _cursiva_) en vez de mostrar asteriscos.
+ */
+export function textoIA(s: unknown): string {
+  return esc(String(s ?? '').trim())
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/__(.+?)__/g, '<b>$1</b>')
+    .replace(/(^|[\s(¡¿"«])\*(\S(?:[^*\n]*\S)?)\*(?=[\s).,;:!?"»]|$)/g, '$1<i>$2</i>')
+    .replace(/(^|[\s(¡¿"«])_(\S(?:[^_\n]*\S)?)_(?=[\s).,;:!?"»]|$)/g, '$1<i>$2</i>')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*|\*/g, '')
+}
+
+/** Saca las etiquetas HTML (para mandar líneas del motor a la IA o a la bitácora). */
+export function sinTags(s: string): string {
+  return String(s ?? '').replace(/<[^>]+>/g, '')
+}

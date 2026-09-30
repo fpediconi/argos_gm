@@ -6,6 +6,7 @@ import { puntosAtributoLibres, puntosHabilidadLibres } from '../motor/personaje.
 import { esCaido } from '../motor/personaje.js'
 import type { Combate } from '../motor/tipos.js'
 import { vivos } from '../motor/combate.js'
+import { barraVida } from '../util.js'
 
 const noop = 'x:0'
 
@@ -87,21 +88,21 @@ export function tecladoTiradaBotones(pid: number, turnoN: number, pj: Personaje,
   return f2.length ? [fila, f2] : [fila]
 }
 
-export function tecladoCombate(pid: number, turnoN: number, c: Combate, aliadosCaidos: boolean, tieneConsumibles: boolean): Teclado {
-  const f1 = [
-    { text: '🔫 Atacar', callback_data: `a:${pid}:${turnoN}:at` },
+export function tecladoCombate(pid: number, turnoN: number, c: Combate, aliadosCaidos: boolean, tieneConsumibles: boolean, arma = ''): Teclado {
+  const f1 = [{ text: `🔫 Atacar${arma ? ' con ' + arma : ''}`, callback_data: `a:${pid}:${turnoN}:at` }]
+  const f2 = [
     { text: '🛡️ Cubrirse', callback_data: `a:${pid}:${turnoN}:cu` },
+    { text: '💬 Acción libre', callback_data: `a:${pid}:${turnoN}:li` },
   ]
-  const f2: Teclado[number] = []
-  if (tieneConsumibles) f2.push({ text: '🩹 Usar objeto', callback_data: `a:${pid}:${turnoN}:ob` })
-  if (aliadosCaidos) f2.push({ text: '🤝 Levantar aliado', callback_data: `a:${pid}:${turnoN}:lv` })
-  f2.push({ text: '💬 Acción libre', callback_data: `a:${pid}:${turnoN}:li` })
+  const f3: Teclado[number] = []
+  if (tieneConsumibles) f3.push({ text: '🩹 Usar objeto', callback_data: `a:${pid}:${turnoN}:ob` })
+  if (aliadosCaidos) f3.push({ text: '🤝 Levantar a alguien', callback_data: `a:${pid}:${turnoN}:lv` })
   void c
-  return [f1, f2]
+  return f3.length ? [f1, f2, f3] : [f1, f2]
 }
 
 export function tecladoObjetivos(pid: number, turnoN: number, c: Combate): Teclado {
-  return vivos(c).map((e) => [{ text: `👹 ${e.nombre} (${e.salud}/${e.salud_max})`, callback_data: `t:${pid}:${turnoN}:${e.uid}` }])
+  return vivos(c).map((e) => [{ text: `👹 ${e.nombre} ${barraVida(e.salud, e.salud_max)} ${e.salud}/${e.salud_max}`, callback_data: `t:${pid}:${turnoN}:${e.uid}` }])
 }
 
 export function tecladoAliadosCaidos(pid: number, turnoN: number, pjs: Personaje[], yo: Personaje): Teclado {

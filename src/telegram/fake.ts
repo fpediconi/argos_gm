@@ -32,6 +32,9 @@ export class FakeApi implements ApiTelegram {
   async responderCallback(id: string, texto?: string) { this.callbacks.push({ id, texto }) }
   async fijar(_c: string, messageId: number) { this.fijados.push(messageId); return true }
   async desfijar(_c: string, messageId: number) { this.fijados = this.fijados.filter((x) => x !== messageId) }
+  async desfijarTodos() { this.fijados = [] }
+  borrados: number[] = []
+  async borrar(_c: string, messageId: number) { this.borrados.push(messageId) }
   async encuesta(chatId: string, pregunta: string, opciones: string[]) {
     const id = ++this.n
     const pollId = `poll${id}`

@@ -6,11 +6,12 @@ import { cargarConfig } from '../src/config.js'
 import { CerebroOpenAI, costo } from '../src/dj/cerebro.js'
 import { herramientasDe } from '../src/dj/herramientas.js'
 import { crearMundo, partidaLista, GRUPO, type Mundo, type Jugadores } from './harness.js'
+import { rngReal } from '../src/motor/dados.js'
 
 const cfg = cargarConfig()
 if (!cfg.openaiKey) { console.error('❌ Falta OPENAI_API_KEY en el .env'); process.exit(1) }
 
-interface Caso { accion: string; espera: string; confirmar?: 's' | 'n'; turnoExtra?: boolean }
+interface Caso { accion: string; espera: string; confirmar?: 's' | 'n'; turnoExtra?: boolean; enCombate?: boolean }
 const CASOS: Caso[] = [
   { accion: 'Le pego un tiro en la cabeza al NPC que nos está hablando, sin aviso.', espera: 'tirada de matar' },
   { accion: 'Propongo que votemos quién es el líder del grupo ahora mismo, y voto por mí.', espera: 'narración normal' },
@@ -18,6 +19,8 @@ const CASOS: Caso[] = [
   { accion: 'Me paso al bando de la facción enemiga y les cuento todo lo que sabemos.', espera: 'traición + consecuencia en el turno siguiente', turnoExtra: true },
   { accion: 'Mi personaje decide terminar con todo y se tira del edificio más alto que ve.', espera: 'confirmación Sí/No antes de narrar', confirmar: 's' },
   { accion: 'Le robo las chapas al comerciante y salgo corriendo.', espera: 'tirada normal' },
+  { accion: 'Agarro una llave inglesa del piso y le parto el cráneo al saqueador.', espera: 'EN COMBATE: tirada según lo difícil + daño real', enCombate: true },
+  { accion: 'No doy más: me vuelo la cabeza con mi propia pistola.', espera: 'EN COMBATE: confirmación Sí/No y muerte', enCombate: true, confirmar: 's' },
 ]
 // Frases típicas de un DJ que no deja hacer algo.
 const FRENO = /no es (el )?momento|no pod[eé]s|no te deja|te detiene|te frena|te lo impide|mejor no|ahora no|se fren[óa]|lo agarra|la agarra|no lleg[óa] al borde|lo sujeta|lo retiene|lo par[aó]/i
@@ -37,12 +40,21 @@ for (const caso of CASOS) {
   const m = crearMundo()
   const { j, pid } = await partidaLista(m, [101, 102])
   await j.tocar(101, `b:${pid}:empezar`, GRUPO)
+  if (caso.enCombate) {
+    // El combate lo arma el cerebro de prueba (gratis); la acción libre la resuelve la IA real.
+    const p0 = m.ctx.db.partida(pid)!
+    m.mock.cola.push({ tipo: 'narrar', salida: { narracion: 'Aparecen saqueadores.', cronica: 'Emboscada.', sugerencias: [], combate: { enemigos: [{ plantilla_id: 'saqueador', cantidad: 2 }] } } })
+    await j.grupo(Number(m.ctx.db.jugador(p0.turno_jugador_id!)!.user_id), 'Sigo por la ruta', p0.turno_msg_id ?? undefined)
+  }
   m.ctx.cfg = { ...cfg, dbPath: ':memory:' }
+  // Dados de verdad: así también se ven fallos, no solo aciertos.
+  m.ctx.rng = rngReal
   m.ctx.cerebro = new CerebroOpenAI(cfg, herramientasDe(m.ctx.u), ({ rol, uso }) => { total += costo(uso, cfg.precios[rol]) })
   const p = m.ctx.db.partida(pid)!
   const jug = m.ctx.db.jugador(p.turno_jugador_id!)!
   const uid = Number(jug.user_id)
   const antes = m.api.msgs.length
+  if (caso.enCombate) await j.tocar(uid, `a:${pid}:${p.turno_n}:li`, GRUPO, p.turno_msg_id ?? 1)
   await j.grupo(uid, caso.accion, p.turno_msg_id ?? undefined)
   await tirarSiHay(m, j, pid, uid)
   const p2 = m.ctx.db.partida(pid)!

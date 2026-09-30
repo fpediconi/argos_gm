@@ -1,7 +1,7 @@
 import type { Ctx } from '../ctx.js'
 import type { Jugador, Partida } from '../motor/tipos.js'
-import { esc, parseDuracion, formatoDuracion, fechaCorta } from '../util.js'
-import { fichaTexto, inventarioTexto, partyTexto, REGLAS } from '../telegram/textos.js'
+import { esc, parseDuracion, formatoDuracion, fechaCorta, textoIA } from '../util.js'
+import { alertasTexto, fichaTexto, inventarioTexto, partyTexto, REGLAS } from '../telegram/textos.js'
 import { npcsVivos } from '../motor/estado.js'
 import { estadoPresupuesto } from '../dj/presupuesto.js'
 import { transmisionRadio } from '../dj/servicios.js'
@@ -64,7 +64,7 @@ export async function cmdResumen(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
   const presentes = npcsVivos(m)
   if (presentes.length) l.push('👥 ' + presentes.map((n) => `${esc(n.nombre)} (${esc(n.actitud)})`).join(' · '))
   if (m.muertos?.length) l.push('💀 ' + m.muertos.map(esc).join(', '))
-  for (const r of m.relojes) l.push(`⏰ ${esc(r.nombre)} ${'▰'.repeat(r.llenos)}${'▱'.repeat(Math.max(0, r.segmentos - r.llenos))}`)
+  l.push(...alertasTexto(p))
   if (m.decisiones?.length) l.push('🗳️ ' + m.decisiones.slice(-3).map(esc).join(' · '))
   await resp(l.join('\n').replace(/\n{3,}/g, '\n\n').trim())
 }
@@ -92,7 +92,7 @@ export async function cmdRadio(ctx: Ctx, p: Partida, j: Jugador, resp: Resp, lar
     const t = await transmisionRadio(ctx, p, cronicas.slice(-25), largo)
     j.ultimo_visto_n = ctx.db.maxBitacora(p.id)
     ctx.db.guardarJugador(j)
-    await resp(`📻 <b>Radio Yermo</b>\n\n<i>${esc(t)}</i>`)
+    await resp(`📻 <b>Radio Yermo</b>\n\n<i>${textoIA(t)}</i>`)
   } catch {
     await resp('📡 Radio Yermo no tiene señal ahora. Probá /resumen.')
   }
@@ -186,6 +186,7 @@ export async function cmdPausa(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
 export async function cmdReanudar(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
   if (p.anfitrion_id !== j.user_id) return resp('Solo el anfitrión.')
   if (p.estado !== 'PAUSADA') return resp('La partida no está en pausa.')
+  if (ctx.db.personajesVivos(p.id).length === 0) return resp('💀 No queda nadie en pie. Creen un personaje nuevo (la partida sigue sola apenas alguien lo termina) o terminen la historia con /fin.')
   p.estado = 'EN_JUEGO'
   ctx.db.guardarPartida(p)
   await resp('▶️ ¡Seguimos!')

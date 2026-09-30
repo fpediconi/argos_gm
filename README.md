@@ -44,3 +44,7 @@ finales del guion según lo que pasó. `/final N` cierra la historia en N turnos
 - `/config` (anfitrión): cambia tono, duración, plazo (incluye ⚡ Skip directo), letalidad, violencia, traiciones, líneas y velos y silencio con la partida empezada.
 - `/final N` (anfitrión): cierra la historia en N turnos.
 - Audios: una nota de voz que responde a la tarjeta del turno se transcribe con Whisper y se juega como texto.
+- `/limpiar_fijados` (anfitrión): deja fijados solo el tablero y el turno actual.
+- Quien pierde su personaje sigue en la ronda como 🎙️ voz del mundo: sugiere rumores, NPC o giros que el DJ usa como inspiración.
+- Si no queda nadie en pie, la partida ofrece personajes nuevos (sigue sola) o terminar con epílogo.
+- En combate, una acción libre que es un ataque (aunque sea creativo) tira según su dificultad y hace daño real; otras acciones libres (rendirse, huir) pueden terminar el combate.

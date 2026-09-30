@@ -5,12 +5,12 @@ import { AYUDA_GRUPO, partyTexto } from './textos.js'
 import { esc, recortar } from '../util.js'
 import { callbackConfig, callbackWizard, comandoConfig, comandoNueva, empezarPartida, premisaEscrita } from '../juego/setup.js'
 import { callbackCreacion, callbackMejora, contextoDe, esperaTextoCreacion, textoCreacion, unirse } from '../juego/creacion.js'
-import { avisarFueraDeTurno, confirmarDecision, procesarAccion, reintentarNarracion, resolverTirada } from '../juego/turno.js'
+import { avisarFueraDeTurno, confirmarDecision, finalizarPartida, procesarAccion, saltarTurno, reintentarNarracion, resolverTirada } from '../juego/turno.js'
 import { accionCombate, elegirAliado, elegirObjetivo, elegirObjeto } from '../juego/combate.js'
 import { proponerSaltear, votar } from '../juego/votos.js'
 import { cmdCerrarVotacion, iniciarVotacion, votoEncuesta } from '../juego/decisiones.js'
 import * as info from '../juego/info.js'
-import { aGrupo, botonGrupo, botonPrivado, cargar, urlUnirse } from '../juego/comun.js'
+import { aGrupo, botonGrupo, botonPrivado, cargar, fijarSolo, urlUnirse } from '../juego/comun.js'
 import { estadoPresupuesto } from '../dj/presupuesto.js'
 import { fichaTexto, inventarioTexto } from './textos.js'
 
@@ -33,6 +33,7 @@ export const COMANDOS = [
   { command: 'x', description: 'Pedir que el DJ cambie el rumbo' },
   { command: 'config', description: 'Cambiar la configuración (anfitrión)' },
   { command: 'final', description: 'Cerrar la historia en N turnos (anfitrión)' },
+  { command: 'limpiar_fijados', description: 'Dejar fijados solo tablero y turno (anfitrión)' },
   { command: 'costo', description: 'Gasto de IA (anfitrión)' },
   { command: 'ayuda', description: 'Cómo se juega' },
 ]
@@ -137,7 +138,6 @@ async function escuchar(ctx: Ctx, msg: TgMessage, userId: string): Promise<strin
     const { datos, ruta } = await ctx.api.descargar(audio.file_id)
     const texto = recortar(await ctx.oido.transcribir(datos, ruta, pid, audio.duration), 600)
     if (!texto) throw new Error('transcripción vacía')
-    await aviso(`🎙️ <i>Entendí: "${esc(texto)}"</i>`)
     return texto
   } catch (e) {
     ctx.log('No pude transcribir:', (e as Error).message)
@@ -159,6 +159,11 @@ async function mensaje(ctx: Ctx, msgOriginal: TgMessage): Promise<void> {
     return
   }
   if (msg.new_chat_members?.length) return bienvenida(ctx, msg)
+  // El aviso "Argos fijó un mensaje" no suma nada: se borra (si el bot tiene permiso).
+  if (msg.pinned_message && msg.from?.id === ctx.botId) {
+    await ctx.api.borrar(String(msg.chat.id), msg.message_id)
+    return
+  }
   if (!msg.from || msg.from.is_bot) return
   const privado = msg.chat.type === 'private'
   const userId = String(msg.from.id)
@@ -249,6 +254,14 @@ async function comando(ctx: Ctx, msg: TgMessage, cmd: string, args: string, priv
       const r = await empezarPartida(ctx, pid, userId)
       if (r) await resp(r)
       return
+    }
+    if (cmd === 'limpiar_fijados') {
+      if (p.anfitrion_id !== userId) return resp('Solo el anfitrión puede limpiar los fijados.')
+      await ctx.api.desfijarTodos(p.chat_id)
+      p.mundo.fijados = []
+      await fijarSolo(ctx, p, [p.tablero_msg_id, p.estado === 'EN_JUEGO' ? p.turno_msg_id : null])
+      ctx.db.guardarPartida(p)
+      return resp('📌 Listo: quedaron fijados solo el tablero y el turno actual.')
     }
     if (cmd === 'config' || cmd === 'configuracion') {
       const r = await comandoConfig(ctx, p, userId)
@@ -360,7 +373,15 @@ async function callback(ctx: Ctx, cb: TgCallback): Promise<void> {
       switch (t) {
         case 'w': return callbackWizard(ctx, P, userId, r[1], r[2])
         case 'g': return callbackConfig(ctx, P, userId, msgId, r[1], r[2])
-        case 'b': return r[1] === 'empezar' ? empezarPartida(ctx, P, userId) : undefined
+        case 'b':
+          if (r[1] === 'empezar') return empezarPartida(ctx, P, userId)
+          if (r[1] === 'fin') {
+            const p = ctx.db.partida(P)
+            if (!p || p.estado === 'FINALIZADA') return 'La partida ya terminó.'
+            if (p.anfitrion_id !== userId) return 'Solo el anfitrión puede terminar la historia.'
+            await finalizarPartida(ctx, P)
+          }
+          return undefined
         case 'r': return resolverTirada(ctx, P, userId, num(r[1]), r[2], msgId)
         case 'd': return confirmarDecision(ctx, P, userId, num(r[1]), r[2] === 's')
         case 'a': return accionCombate(ctx, P, userId, num(r[1]), r[2])
@@ -387,6 +408,11 @@ async function botonInfo(ctx: Ctx, pid: number, userId: string, que: string): Pr
   const j = ctx.db.jugadorDeUsuario(pid, userId)
   if (!j) return 'No estás en esta partida.'
   // Las ideas son cortas: van como aviso emergente, sin mensajes.
+  if (que === 'pasar') {
+    if (p.turno_jugador_id !== j.id || p.estado !== 'EN_JUEGO') return 'No es tu turno.'
+    await saltarTurno(ctx, pid, 'pasar')
+    return
+  }
   if (que === 'ideas') {
     const ideas = p.mundo.ideas ?? []
     return ideas.length ? `💡 ${ideas.join(' · ')}` : 'El DJ no dejó ideas esta vez.'

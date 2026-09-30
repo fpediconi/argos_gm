@@ -4,7 +4,8 @@ import { ataqueJugador, levantarAliado, resolverCaidos, turnoEnemigos, usarObjet
 import { esCaido, quitarItem, saludMaxEfectiva } from '../motor/personaje.js'
 import { armaPrincipal } from '../motor/reglas.js'
 import { ErrorPresupuesto, narrarRondaCombate } from '../dj/servicios.js'
-import { esc } from '../util.js'
+import { esc, sinTags, textoIA } from '../util.js'
+import { inicioCombateTexto, tarjetaTurnoTexto } from '../telegram/textos.js'
 import { tecladoAliadosCaidos, tecladoCombate, tecladoObjetivos } from '../telegram/teclados.js'
 import type { Teclado } from '../telegram/api.js'
 import { aGrupo, cargar, pjDe, refrescarTablero, registrar } from './comun.js'
@@ -20,7 +21,7 @@ function consumiblesDe(ctx: Ctx, pj: Personaje) {
 
 export function tecladoCombateDe(ctx: Ctx, partida: Partida, pj: Personaje, pjs: Personaje[]): Teclado {
   const caidos = pjs.some((p) => p.id !== pj.id && p.vivo && esCaido(p))
-  return tecladoCombate(partida.id, partida.turno_n, partida.mundo.combate!, caidos, consumiblesDe(ctx, pj).length > 0)
+  return tecladoCombate(partida.id, partida.turno_n, partida.mundo.combate!, caidos, consumiblesDe(ctx, pj).length > 0, armaPrincipal(pj, ctx.u).nombre)
 }
 
 export async function comenzarCombate(ctx: Ctx, pid: number, combate: Combate, actorJugadorId: number): Promise<void> {
@@ -31,13 +32,13 @@ export async function comenzarCombate(ctx: Ctx, pid: number, combate: Combate, a
   partida.paso = { tipo: 'libre' }
   ctx.db.guardarPartida(partida)
   const sorp = { jugadores: '¡Los enemigos no los vieron venir!', enemigos: '¡Los enemigos los sorprenden!', ninguna: '' }[combate.sorpresa]
-  await aGrupo(ctx, partida, `⚔️ <b>¡COMBATE!</b> ${sorp}\n${combate.enemigos.map((e) => `👹 ${esc(e.nombre)} — ❤️ ${e.salud} · TN ${e.tn} · daño ${e.danio}${e.prot ? ' · prot ' + e.prot : ''}`).join('\n')}`)
+  await aGrupo(ctx, partida, inicioCombateTexto(combate, sorp))
   if (combate.sorpresa === 'enemigos') {
     const lineas = turnoEnemigos(ctx.u, pjs, combate, ctx.rng)
     combate.log.push(...lineas)
     for (const p of pjs) ctx.db.guardarPersonaje(p)
     ctx.db.guardarPartida(partida)
-    if (lineas.length) await aGrupo(ctx, partida, lineas.join('\n'))
+    if (lineas.length) await aGrupo(ctx, partida, faseEnemigos(lineas))
   }
   await refrescarTablero(ctx, pid)
   await finTurnoCombate(ctx, pid)
@@ -48,7 +49,7 @@ export async function finTurnoCombate(ctx: Ctx, pid: number): Promise<void> {
   const c = partida.mundo.combate
   if (!c) return iniciarTurno(ctx, pid)
   if (vivos(c).length === 0) return cerrarCombate(ctx, pid, 'victoria')
-  if (pjs.length > 0 && pjs.every((p) => esCaido(p))) return cerrarCombate(ctx, pid, 'derrota')
+  if (pjs.every((p) => esCaido(p))) return cerrarCombate(ctx, pid, 'derrota')
   const hayPendientes = jugadores.some((j) => {
     if (j.estado !== 'activo' && j.estado !== 'listo') return false
     const pj = pjDe(pjs, j)
@@ -69,7 +70,7 @@ async function narrarYEnviar(ctx: Ctx, pid: number, cierre: string): Promise<voi
   }
   const cronica = `Combate, ronda ${c.ronda}: ${vivos(c).length} enemigo(s) en pie${cierre.includes('derrotados') ? ' (victoria)' : ''}.`
   registrar(ctx, partida, null, 'narracion', texto || c.log.join(' '), cronica)
-  if (texto) await aGrupo(ctx, partida, `🎲 <i>${esc(texto)}</i>`)
+  if (texto) await aGrupo(ctx, partida, `🎲 <i>${textoIA(texto)}</i>`)
 }
 
 async function cerrarRonda(ctx: Ctx, pid: number): Promise<void> {
@@ -79,12 +80,12 @@ async function cerrarRonda(ctx: Ctx, pid: number): Promise<void> {
     const lineas = turnoEnemigos(ctx.u, pjs, c, ctx.rng)
     c.log.push(...lineas)
     for (const p of pjs) ctx.db.guardarPersonaje(p)
-    if (lineas.length) await aGrupo(ctx, partida, lineas.join('\n'))
+    if (lineas.length) await aGrupo(ctx, partida, faseEnemigos(lineas))
   } else {
     c.log.push('Los enemigos están desprevenidos y no reaccionan esta ronda.')
   }
   ctx.db.guardarPartida(partida)
-  const todosCaidos = pjs.length > 0 && pjs.every((p) => esCaido(p))
+  const todosCaidos = pjs.every((p) => esCaido(p))
   if (todosCaidos) return cerrarCombate(ctx, pid, 'derrota', true)
   await narrarYEnviar(ctx, pid, 'La ronda terminó y el combate continúa.')
   const p2 = ctx.db.partida(pid)!
@@ -97,11 +98,12 @@ async function cerrarRonda(ctx: Ctx, pid: number): Promise<void> {
   await iniciarTurno(ctx, pid)
 }
 
-async function cerrarCombate(ctx: Ctx, pid: number, resultado: 'victoria' | 'derrota', enemigosYaActuaron = false): Promise<void> {
+export async function cerrarCombate(ctx: Ctx, pid: number, resultado: 'victoria' | 'derrota' | 'tregua', enemigosYaActuaron = false): Promise<void> {
   const { partida, pjs } = cargar(ctx, pid)
-  const c = partida.mundo.combate!
+  const c = partida.mundo.combate
+  if (!c) return iniciarTurno(ctx, pid)
   void enemigosYaActuaron
-  await narrarYEnviar(
+  if (resultado !== 'tregua') await narrarYEnviar(
     ctx,
     pid,
     resultado === 'victoria'
@@ -144,7 +146,29 @@ async function validar(ctx: Ctx, pid: number, userId: string, turnoN: number) {
   return { partida, j, pj, pjs, c: partida.mundo.combate }
 }
 
+/** Vuelve a mostrar la tarjeta del turno con sus botones (al tocar "↩️ Volver"). */
+async function mostrarOpciones(ctx: Ctx, partida: Partida, j: Jugador, pj: Personaje, pjs: Personaje[]): Promise<void> {
+  if (!partida.turno_msg_id) return
+  await ctx.api.editar(partida.chat_id, partida.turno_msg_id, tarjetaTurnoTexto(ctx, partida, j, pj, pjs), tecladoCombateDe(ctx, partida, pj, pjs))
+}
+
+const volver = (pid: number, turnoN: number) => [{ text: '↩️ Volver', callback_data: `a:${pid}:${turnoN}:vo` }]
+
 export async function accionCombate(ctx: Ctx, pid: number, userId: string, turnoN: number, cod: string): Promise<string | void> {
+  // "Volver" también sirve para arrepentirse de una acción libre que todavía no escribiste.
+  if (cod === 'vo') {
+    const { partida, jugadores, pjs } = cargar(ctx, pid)
+    const j = jugadores.find((x) => x.id === partida.turno_jugador_id)
+    if (!partida.mundo.combate || partida.turno_n !== turnoN) return 'Ese botón ya no vale.'
+    if (!j || j.user_id !== userId) return 'No es tu turno.'
+    if (partida.paso.tipo !== 'esperando_accion' && partida.paso.tipo !== 'esperando_libre') return 'Ya elegiste tu acción.'
+    const pj = pjDe(pjs, j)
+    if (!pj) return
+    partida.paso = { tipo: 'esperando_accion' }
+    ctx.db.guardarPartida(partida)
+    await mostrarOpciones(ctx, partida, j, pj, pjs)
+    return
+  }
   const v = await validar(ctx, pid, userId, turnoN)
   if ('err' in v) return v.err
   const { partida, j, pj, pjs, c } = v
@@ -154,7 +178,7 @@ export async function accionCombate(ctx: Ctx, pid: number, userId: string, turno
       const arma = armaPrincipal(pj, ctx.u)
       const v2 = vivos(c)
       if (v2.length > 1 && !arma.area) {
-        if (cardId) await ctx.api.editar(partida.chat_id, cardId, `⚔️ <b>${esc(pj.ficha.nombre)}</b>, ¿a quién atacás con ${esc(arma.nombre)}?`, tecladoObjetivos(pid, turnoN, c))
+        if (cardId) await ctx.api.editar(partida.chat_id, cardId, `⚔️ <b>${esc(pj.ficha.nombre)}</b>, ¿a quién atacás con ${esc(arma.nombre)}?`, [...tecladoObjetivos(pid, turnoN, c), volver(pid, turnoN)])
         return
       }
       return resolverAtaque(ctx, pid, j, pj, v2[0]?.uid ?? null)
@@ -162,26 +186,25 @@ export async function accionCombate(ctx: Ctx, pid: number, userId: string, turno
     case 'cu': {
       pj.cubierto = true
       ctx.db.guardarPersonaje(pj)
-      return terminarAccion(ctx, pid, j, `🛡️ ${pj.ficha.nombre} se cubre (+1 Defensa hasta que actúen los enemigos).`)
+      return terminarAccion(ctx, pid, j, `🛡️ <b>${pj.ficha.nombre}</b> se cubre: más difícil de golpear hasta que actúen los enemigos.`)
     }
     case 'ob': {
       const cons = consumiblesDe(ctx, pj)
       if (!cons.length) return 'No tenés nada para usar.'
       const teclado: Teclado = cons.map((x) => [{ text: `${x.def!.nombre} ×${x.i.n} — ${x.def!.desc}`, callback_data: `o:${pid}:${turnoN}:${x.def!.id}` }])
-      if (cardId) await ctx.api.editar(partida.chat_id, cardId, `🩹 <b>${esc(pj.ficha.nombre)}</b>, ¿qué usás?`, teclado)
+      if (cardId) await ctx.api.editar(partida.chat_id, cardId, `🩹 <b>${esc(pj.ficha.nombre)}</b>, ¿qué usás?`, [...teclado, volver(pid, turnoN)])
       return
     }
     case 'lv': {
       const teclado = tecladoAliadosCaidos(pid, turnoN, pjs, pj)
       if (!teclado.length) return 'No hay aliados caídos.'
-      if (cardId) await ctx.api.editar(partida.chat_id, cardId, `🤝 <b>${esc(pj.ficha.nombre)}</b>, ¿a quién levantás?`, teclado)
+      if (cardId) await ctx.api.editar(partida.chat_id, cardId, `🤝 <b>${esc(pj.ficha.nombre)}</b>, ¿a quién levantás?`, [...teclado, volver(pid, turnoN)])
       return
     }
     case 'li': {
       partida.paso = { tipo: 'esperando_libre', jugadorId: j.id }
       ctx.db.guardarPartida(partida)
-      if (cardId) await ctx.api.quitarTeclado(partida.chat_id, cardId)
-      await aGrupo(ctx, partida, `💬 <b>${esc(pj.ficha.nombre)}</b>: respondé a este mensaje con tu acción (algo que no sea un ataque común).`, { responderA: cardId ?? undefined })
+      if (cardId) await ctx.api.editar(partida.chat_id, cardId, `💬 <b>${esc(pj.ficha.nombre)}</b>: respondé a este mensaje con lo que hacés.\nPuede ser un ataque a tu manera (hay tirada según lo difícil que sea) o cualquier otra cosa: huir, rendirte, negociar, ayudar…`, [volver(pid, turnoN)])
       return
     }
   }
@@ -235,9 +258,11 @@ async function terminarAccion(ctx: Ctx, pid: number, j: Jugador, linea: string):
   ctx.db.guardarJugador(j)
   partida.paso = { tipo: 'libre' }
   ctx.db.guardarPartida(partida)
-  registrar(ctx, partida, j.id, 'tirada', linea)
-  if (partida.turno_msg_id) await ctx.api.quitarTeclado(partida.chat_id, partida.turno_msg_id)
-  await aGrupo(ctx, partida, esc(linea).replace(/&lt;b&gt;/g, '<b>'))
+  registrar(ctx, partida, j.id, 'tirada', sinTags(linea))
+  // La tarjeta del turno no queda diciendo "¿a quién atacás?": se cierra.
+  const pj = ctx.db.personajeVivoDe(j.id)
+  if (partida.turno_msg_id) await ctx.api.editar(partida.chat_id, partida.turno_msg_id, `✅ <b>${esc(pj?.ficha.nombre ?? j.nombre)}</b> ya jugó su turno de esta ronda.`, [])
+  await aGrupo(ctx, partida, esc(linea).replace(/&lt;(\/?)b&gt;/g, '<$1b>'))
   await avanzarTurno(ctx, pid)
 }
 
@@ -248,3 +273,8 @@ export function estadoCombateTexto(partida: Partida): string {
 }
 
 export { saludMaxEfectiva }
+
+/** Fase de los enemigos, agrupada en un solo mensaje. */
+function faseEnemigos(lineas: string[]): string {
+  return `👹 <b>Turno de los enemigos</b>\n${lineas.map((x) => esc(x).replace(/&lt;(\/?)b&gt;/g, '<$1b>')).join('\n')}`
+}

@@ -42,7 +42,7 @@ export function herramientasDe(u: Universo) {
             description: 'Cambios propuestos; el motor los valida. Los ids de personaje son P1, P2... como figuran en el estado.',
             properties: {
               salud: { type: 'array', items: { type: 'object', properties: { pj: { type: 'string' }, delta: { type: 'integer' }, motivo: { type: 'string' } }, required: ['pj', 'delta'] } },
-              objetos: { type: 'array', items: { type: 'object', properties: { pj: { type: 'string' }, item: { type: 'string', enum: itemIds }, delta: { type: 'integer' } }, required: ['pj', 'item', 'delta'] } },
+              objetos: { type: 'array', items: { type: 'object', properties: { pj: { type: 'string' }, item: { type: 'string', enum: itemIds }, nombre_libre: { type: 'string', description: 'Objeto que no está en el catálogo (una llave, una carta, un amuleto). Sin efecto de reglas.' }, delta: { type: 'integer' } }, required: ['pj', 'delta'] } },
               chapas: { type: 'array', items: { type: 'object', properties: { pj: { type: 'string' }, delta: { type: 'integer' }, motivo: { type: 'string' } }, required: ['pj', 'delta'] } },
               rads: { type: 'array', items: { type: 'object', properties: { pj: { type: 'string' }, delta: { type: 'integer' } }, required: ['pj', 'delta'] } },
               condiciones: { type: 'array', items: { type: 'object', properties: { pj: { type: 'string' }, condicion: { type: 'string' }, accion: { type: 'string', enum: ['poner', 'quitar'] } }, required: ['pj', 'condicion', 'accion'] } },
@@ -67,6 +67,7 @@ export function herramientasDe(u: Universo) {
             },
             required: ['enemigos'],
           },
+          terminar_combate: { type: 'boolean', description: 'Solo en combate: true si esta acción libre lo termina (rendición aceptada, huida, tregua)' },
           cerrar_capitulo: { type: 'boolean', description: 'true si este turno cierra el capítulo (el arco del capítulo se resolvió)' },
           vinculos: { type: 'array', items: { type: 'string' }, description: 'SOLO en la apertura: un vínculo de una línea por cada par de personajes' },
         },

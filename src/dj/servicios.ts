@@ -4,9 +4,11 @@ import type { Decision, RolIA } from './cerebro.js'
 import { parsearGuion } from './cerebro.js'
 import { sistemaTurno, fichaCompacta } from './contexto.js'
 import { estadoPresupuesto } from './presupuesto.js'
-import { PROMPT_EPILOGO, PROMPT_GUIONISTA, PROMPT_INTENCION, PROMPT_PREMISAS, PROMPT_RADIO, PROMPT_REACCION, PROMPT_RESUMEN, PROMPT_RONDA, PROMPT_TRASFONDO } from './prompts.js'
+import { PROMPT_EPILOGO, PROMPT_GUIONISTA, PROMPT_INTENCION, PROMPT_INTENCION_COMBATE, PROMPT_PREMISAS, PROMPT_RADIO, PROMPT_REACCION, PROMPT_RESUMEN, PROMPT_RONDA, PROMPT_TRASFONDO } from './prompts.js'
 import { DURACIONES } from '../motor/ritmo.js'
-import { recortar } from '../util.js'
+import { ATRIBUTOS, type AtribId } from '../motor/tipos.js'
+import { vivos } from '../motor/combate.js'
+import { recortar, sinTags } from '../util.js'
 
 export class ErrorPresupuesto extends Error {
   constructor() {
@@ -138,7 +140,7 @@ export async function narrarRondaCombate(ctx: Ctx, partida: Partida, pjs: Person
   const pres = estadoPresupuesto(ctx, partida.id)
   if (pres.nivel === 'parado') throw new ErrorPresupuesto()
   const sistema = sistemaTurno(ctx, partida, pjs, jugadores, { economico: pres.nivel === 'economico' }) + '\n\n' + PROMPT_RONDA
-  const usuario = `Registro mecánico de la ronda:\n${lineas.join('\n')}\n${cierre}`
+  const usuario = `Registro mecánico de la ronda:\n${lineas.map(sinTags).join('\n')}\n${cierre}`
   return ctx.cerebro.texto({ tarea: 'ronda_combate', rol: pres.nivel === 'economico' ? 'util' : 'narrador', partidaId: partida.id, sistema, usuario, maxSalida: 600 })
 }
 
@@ -146,7 +148,7 @@ export async function narrarRondaCombate(ctx: Ctx, partida: Partida, pjs: Person
  * Palabras que pueden indicar una acción drástica. Solo si aparece alguna se gasta la llamada
  * (barata) al clasificador; el resto de las acciones van directo al narrador.
  */
-const PREFILTRO = /(\bmat(o|a|ar|arlo|arla|arme|arte)\b|asesin|degoll|degüell|apuñal|acuchill|ejecut|ahorc|suicid|\bme tiro\b|tirarme|\bme mato\b|matarme|terminar con todo|quitarme la vida|me dejo morir|me sacrific|sacrificarme|me pego un tiro|volarle|le pego un tiro|le disparo|\bme voy\b|me largo|me rajo|me abro|abandon|dejo el grupo|dejo a los|me separo|me paso|pasarme|traicion|traiciono|les cuento todo|le cuento todo|delat|vendo al grupo|entrego al grupo|me uno a)/i
+const PREFILTRO = /(\bmat(o|a|ar|arlo|arla|arme|arte)\b|le parto|le reviento|le vuelo la|l[oa] liquido|l[oa] fusilo|l[oa] estrangulo|l[oa] ahogo|le corto el cuello|le rompo el cuello|l[oa] apuñalo|me voy a (tirar|matar|disparar|colgar|ahorcar|lanzar)|voy a (tirarme|matarme|dispararme)|(me )?quiero (morir|matarme)|\bmorir(me)?\b|me cuelgo|colgarme|asesin|degoll|degüell|apuñal|acuchill|ejecut|ahorc|suicid|\bme tiro\b|tirarme|\bme mato\b|matarme|terminar con todo|quitarme la vida|me dejo morir|me dejo caer|me arrojo|arrojarme|me lanzo al vac|saltar al vac|me sacrific|sacrificarme|me pego un tiro|me disparo|dispararme|me vuelo la|volarme|me clavo|me corto|me apuñalo|me degüello|volarle|le pego un tiro|le disparo|\bme voy\b|me largo|me rajo|me abro|abandon|dejo el grupo|dejo a los|me separo|me paso|pasarme|traicion|traiciono|les cuento todo|le cuento todo|delat|vendo al grupo|entrego al grupo|me uno a)/i
 
 export function podriaSerDrastica(texto: string): boolean {
   return PREFILTRO.test(texto)
@@ -165,6 +167,32 @@ export async function clasificarIntencion(ctx: Ctx, partida: Partida, pj: Person
     const j = JSON.parse(txt.replace(/^```(?:json)?\s*|\s*```$/g, ''))
     const tipo = TIPOS.includes(j.intencion) ? (j.intencion as TipoIntencion) : 'otra'
     return { tipo, objetivo: recortar(String(j.objetivo ?? ''), 60) || undefined }
+  } catch {
+    return { tipo: 'otra' }
+  }
+}
+
+const TIPOS_COMBATE: TipoIntencion[] = ['ataque', 'muerte_propia', 'traicion', 'otra']
+
+/**
+ * Acción libre en combate: siempre se clasifica (es rara y barata). Si es un ataque, devuelve la prueba
+ * que corresponde a lo que se intenta; el motor la tira y aplica el daño.
+ */
+export async function clasificarAccionCombate(ctx: Ctx, partida: Partida, pj: Personaje, pjs: Personaje[], texto: string): Promise<Intencion> {
+  const c = partida.mundo.combate
+  if (!c || estadoPresupuesto(ctx, partida.id).nivel === 'parado') return { tipo: 'otra' }
+  try {
+    const usuario = `Personaje que actúa: ${pj.ficha.nombre}. Enemigos: ${vivos(c).map((e) => e.nombre).join(', ') || 'ninguno'}. Compañeros: ${pjs.filter((x) => x.id !== pj.id && x.vivo).map((x) => x.ficha.nombre).join(', ') || 'ninguno'}.\nHabilidades válidas: ${ctx.u.habilidades.map((h) => h.id).join(', ')}.\nAcción: ${texto}`
+    const txt = await ctx.cerebro.texto({ tarea: 'intencion', rol: 'util', partidaId: partida.id, sistema: PROMPT_INTENCION_COMBATE, usuario, maxSalida: 400, json: true })
+    const j = JSON.parse(txt.replace(/^```(?:json)?\s*|\s*```$/g, ''))
+    const tipo = TIPOS_COMBATE.includes(j.intencion) ? (j.intencion as TipoIntencion) : 'otra'
+    const objetivo = recortar(String(j.objetivo ?? ''), 60) || undefined
+    if (tipo !== 'ataque' && tipo !== 'traicion') return { tipo, objetivo }
+    const hab = ctx.u.habilidades.find((h) => h.id === j.habilidad) ?? ctx.u.habilidades.find((h) => h.id === 'desarmado')!
+    const atributo = ATRIBUTOS.includes(String(j.atributo).toUpperCase() as AtribId) ? (String(j.atributo).toUpperCase() as AtribId) : hab.attr
+    const d = Math.round(Number(j.dificultad))
+    const prueba = { atributo, habilidad: hab.id, dificultad: d >= 1 && d <= 4 ? d : 2, motivo: recortar(String(j.motivo ?? 'Atacar'), 60) }
+    return { tipo, objetivo, prueba }
   } catch {
     return { tipo: 'otra' }
   }

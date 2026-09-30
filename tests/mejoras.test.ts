@@ -10,13 +10,14 @@ import { rngSecuencia } from '../src/motor/dados.js'
 import { CONFIG_DEFECTO } from '../src/juego/setup.js'
 import type { Decision } from '../src/dj/cerebro.js'
 import type { Personaje } from '../src/motor/tipos.js'
+import { CerebroMock } from '../src/dj/mock.js'
 
 const u = cargarUniverso('fallout')
 const limpio = (h: string) => h.replace(/<[^>]+>/g, '')
 const delGrupo = (m: Mundo) => m.api.msgs.filter((x) => x.chatId === GRUPO)
 
-async function enJuego(opts: Record<string, string> = {}, ids = [101, 102, 103]) {
-  const m = crearMundo()
+async function enJuego(opts: Record<string, string> = {}, ids = [101, 102, 103], sinCombates = false) {
+  const m = crearMundo(sinCombates ? { mock: new CerebroMock(2, 9999) } : {})
   const { j, pid } = await partidaLista(m, ids, opts)
   await j.tocar(101, `b:${pid}:empezar`, GRUPO)
   return { m, j, pid }
@@ -157,16 +158,32 @@ test('tarjeta de turno: grande, fijada, sin "Mientras no estabas", y el privado 
   assert.match(dm.teclado![0][0].url!, /^https:\/\/t\.me\/c\/500\/\d+$/)
 })
 
-test('skip directo: /saltear pasa el turno al toque y no duerme a nadie', async () => {
+/** Con skip directo: uno propone /saltear, el otro vota que sí. */
+async function saltearVotando(m: Mundo, j: Jugadores, pid: number) {
+  const p = m.ctx.db.partida(pid)!
+  const otros = m.ctx.db.jugadores(pid).filter((x) => x.id !== p.turno_jugador_id)
+  await j.grupo(Number(otros[0].user_id), '/saltear')
+  const v = m.api.botonData(GRUPO, /^v:\d+:s$/)
+  assert.ok(v, 'con 3 jugadores, /saltear abre una votación')
+  await j.tocar(Number(otros[1].user_id), v.data, GRUPO, v.msg.id)
+}
+
+test('skip directo: /saltear vota al toque (sin esperar que venza) y no duerme a nadie', async () => {
   const { m, j, pid } = await enJuego({ pla: '-1' })
   for (let i = 0; i < 3; i++) {
-    const p = m.ctx.db.partida(pid)!
-    const actual = p.turno_jugador_id!
-    const otro = m.ctx.db.jugadores(pid).find((x) => x.id !== actual)!
-    await j.grupo(Number(otro.user_id), '/saltear')
+    const actual = m.ctx.db.partida(pid)!.turno_jugador_id!
+    await saltearVotando(m, j, pid)
     assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, actual)
   }
   assert.ok(m.ctx.db.jugadores(pid).every((x) => x.estado === 'activo'))
+})
+
+test('skip directo con 2 jugadores: /saltear saltea directo', async () => {
+  const { m, j, pid } = await enJuego({ pla: '-1' }, [101, 102])
+  const p = m.ctx.db.partida(pid)!
+  const otro = m.ctx.db.jugadores(pid).find((x) => x.id !== p.turno_jugador_id)!
+  await j.grupo(Number(otro.user_id), '/saltear')
+  assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, p.turno_jugador_id)
 })
 
 test('/config: el anfitrión activa skip directo con la partida empezada', async () => {
@@ -179,9 +196,8 @@ test('/config: el anfitrión activa skip directo con la partida empezada', async
   await j.tocar(101, `g:${pid}:pla:-1`, GRUPO, menu.id)
   assert.equal(m.ctx.db.partida(pid)!.config.plazoH, -1)
   const p = m.ctx.db.partida(pid)!
-  const otro = m.ctx.db.jugadores(pid).find((x) => x.id !== p.turno_jugador_id)!
-  await j.grupo(Number(otro.user_id), '/saltear')
-  assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, p.turno_jugador_id, 'saltea sin esperar ni votar')
+  await saltearVotando(m, j, pid)
+  assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, p.turno_jugador_id, 'saltea sin esperar a que venza')
 })
 
 test('bienvenida: el que entra al grupo recibe la invitación con botón, una sola vez', async () => {
@@ -332,7 +348,7 @@ test('audio: se transcribe solo si es la acción del turno', async () => {
   assert.equal(oidas.length, 0, 'audio muy largo: se rechaza sin transcribir')
   await audio(Number(jug.user_id), p.turno_msg_id!)
   assert.equal(oidas.length, 1)
-  assert.ok(delGrupo(m).some((x) => /Entendí: "le apunto al guardia"/.test(limpio(x.html))))
+  assert.ok(!delGrupo(m).some((x) => /Entendí/.test(limpio(x.html))), 'ya no repite lo que entendió')
   assert.ok(m.ctx.db.bitacoraTodas(pid).some((b) => b.tipo === 'accion' && /le apunto al guardia/.test(b.texto)))
 })
 
@@ -487,3 +503,216 @@ test('traición: queda como hecho y la escena siguiente trae la consecuencia', a
   assert.match(sistema, /CONSECUENCIA DE LA TRAICIÓN/)
   assert.match(sistema, /Hijos del Puerto/)
 })
+
+// ------------------------------------------------------------------ segunda partida de prueba (v3)
+
+import { textoIA } from '../src/util.js'
+
+async function aCombate(m: Mundo, j: Jugadores, pid: number, enemigos = [{ plantilla_id: 'saqueador', cantidad: 2 }]) {
+  const t = turnoActual(m, pid)
+  m.mock.cola.push(narrar({ narracion: '¡Emboscada!', combate: { enemigos } }))
+  await j.grupo(t.uid, 'Sigo por el camino', t.p.turno_msg_id!)
+  assert.ok(m.ctx.db.partida(pid)!.mundo.combate, 'arrancó el combate')
+}
+
+test('markdown de la IA: negritas reales, sin asteriscos sueltos', () => {
+  assert.equal(textoIA('El **Yermo** no perdona'), 'El <b>Yermo</b> no perdona')
+  assert.equal(textoIA('Algo *raro* pasa'), 'Algo <i>raro</i> pasa')
+  assert.doesNotMatch(textoIA('**Radio** Yermo *al aire* y un * suelto'), /\*/)
+})
+
+test('relojes: los jugadores no ven nombres ni números de relojes, sí el próximo evento y la tensión', async () => {
+  const { m, j, pid } = await enJuego()
+  const t = turnoActual(m, pid)
+  m.mock.cola.push(narrar({ cambios: { relojes: [{ id: 'una_crecida_toxica_y_una', delta: 1, segmentos: 5 }] } }))
+  await j.grupo(t.uid, 'Miro el río', t.p.turno_msg_id!)
+  const todo = delGrupo(m).map((x) => limpio(x.html)).join('\n')
+  assert.doesNotMatch(todo, /crecida|reloj/i)
+  const tablero = limpio(m.api.msgs.find((x) => x.id === m.ctx.db.partida(pid)!.tablero_msg_id)!.html)
+  assert.match(tablero, /Próximo evento: en \d+ turno/)
+  assert.match(tablero, /Tensión/)
+})
+
+test('npc: el estado se cuenta en lenguaje natural', async () => {
+  const mundo = mundoVacio()
+  aplicarCambios(u, mundo, [], { npcs: [{ id: 'campana', nombre: 'campana' }] }, { enCombate: false })
+  const r = aplicarCambios(u, mundo, [], { npcs: [{ id: 'campana', nombre: 'campana', estado: 'herido' }] }, { enCombate: false })
+  assert.deepEqual(r.aplicados, ['Campana queda herido'])
+})
+
+test('fijados: solo quedan el tablero y el turno actual', async () => {
+  const { m, j, pid } = await enJuego()
+  for (let i = 0; i < 5; i++) await jugar(m, j, pid)
+  const p = m.ctx.db.partida(pid)!
+  assert.deepEqual([...m.api.fijados].sort(), [p.tablero_msg_id!, p.turno_msg_id!].sort())
+})
+
+test('el aviso de "fijó un mensaje" del bot se borra', async () => {
+  const { m, pid } = await enJuego()
+  await m.enviar({ update_id: 95001, message: { message_id: 4242, from: { id: 999, first_name: 'DJ', is_bot: true }, chat: { id: Number(GRUPO), type: 'supergroup' }, date: 0, pinned_message: { message_id: 1 } } })
+  assert.ok(m.api.borrados.includes(4242))
+  void pid
+})
+
+test('combate: sin TN ni daño a la vista, fase enemiga agrupada y volver atrás desde elegir objetivo', async () => {
+  const { m, j, pid } = await enJuego()
+  await aCombate(m, j, pid)
+  const inicio = delGrupo(m).find((x) => /¡COMBATE!/.test(x.html))!
+  assert.doesNotMatch(inicio.html, /TN|daño/)
+  const p = m.ctx.db.partida(pid)!
+  const uid = Number(m.ctx.db.jugador(p.turno_jugador_id!)!.user_id)
+  await j.tocar(uid, `a:${pid}:${p.turno_n}:at`, GRUPO, p.turno_msg_id!)
+  const card = m.api.msgs.find((x) => x.id === p.turno_msg_id)!
+  assert.ok(card.teclado!.flat().some((b) => b.callback_data === `a:${pid}:${p.turno_n}:vo`), 'hay botón Volver')
+  await j.tocar(uid, `a:${pid}:${p.turno_n}:vo`, GRUPO, p.turno_msg_id!)
+  assert.ok(m.api.msgs.find((x) => x.id === p.turno_msg_id)!.teclado!.flat().some((b) => /Atacar/.test(b.text)), 'volvió a las opciones')
+  assert.equal(m.ctx.db.partida(pid)!.turno_n, p.turno_n, 'sigue siendo su turno')
+})
+
+test('combate: acción libre también tiene Volver', async () => {
+  const { m, j, pid } = await enJuego()
+  await aCombate(m, j, pid)
+  const p = m.ctx.db.partida(pid)!
+  const uid = Number(m.ctx.db.jugador(p.turno_jugador_id!)!.user_id)
+  await j.tocar(uid, `a:${pid}:${p.turno_n}:li`, GRUPO, p.turno_msg_id!)
+  assert.equal(m.ctx.db.partida(pid)!.paso.tipo, 'esperando_libre')
+  await j.tocar(uid, `a:${pid}:${p.turno_n}:vo`, GRUPO, p.turno_msg_id!)
+  assert.equal(m.ctx.db.partida(pid)!.paso.tipo, 'esperando_accion')
+})
+
+async function accionLibre(m: Mundo, j: Jugadores, pid: number, texto: string) {
+  const p = m.ctx.db.partida(pid)!
+  const uid = Number(m.ctx.db.jugador(p.turno_jugador_id!)!.user_id)
+  await j.tocar(uid, `a:${pid}:${p.turno_n}:li`, GRUPO, p.turno_msg_id!)
+  await j.grupo(uid, texto, p.turno_msg_id!)
+  return { p, uid }
+}
+
+test('combate: un ataque creativo en acción libre tira según su dificultad y hace daño de verdad', async () => {
+  const { m, j, pid } = await enJuego()
+  await aCombate(m, j, pid, [{ plantilla_id: 'saqueador', cantidad: 1 }])
+  m.mock.textos.intencion = JSON.stringify({ intencion: 'ataque', objetivo: 'Saqueador', atributo: 'FUE', habilidad: 'desarmado', dificultad: 2, motivo: 'Partirle el cráneo con la llave' })
+  const { p, uid } = await accionLibre(m, j, pid, 'Le parto el cráneo con la llave inglesa')
+  const r = m.api.botonData(GRUPO, new RegExp(`^r:${pid}:${p.turno_n}:n`))!
+  assert.match(limpio(r.msg.html), /Difícil/)
+  m.ctx.rng = seq([1, 1, 1, 1])
+  await j.tocar(uid, r.data, GRUPO, r.msg.id)
+  const c = m.ctx.db.partida(pid)!.mundo.combate
+  assert.ok(!c || c.enemigos[0].salud < c.enemigos[0].salud_max, 'el golpe bajó la vida (o terminó el combate)')
+  assert.match(m.mock.vistas.at(-1)!.sistema, /ACCIÓN LIBRE DE ATAQUE/)
+})
+
+test('combate: la acción libre que no es ataque cuenta como la acción de la ronda (no se traba)', async () => {
+  const { m, j, pid } = await enJuego()
+  await aCombate(m, j, pid)
+  m.mock.textos.intencion = '{"intencion":"otra"}'
+  const { p } = await accionLibre(m, j, pid, 'Grito para distraerlos')
+  const c = m.ctx.db.partida(pid)!.mundo.combate!
+  assert.ok(c.orden.includes(p.turno_jugador_id!) || c.ronda > 1)
+  assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, p.turno_jugador_id)
+})
+
+test('combate: una rendición aceptada termina el combate', async () => {
+  const { m, j, pid } = await enJuego()
+  await aCombate(m, j, pid)
+  m.mock.textos.intencion = '{"intencion":"otra"}'
+  m.mock.cola.push(narrar({ narracion: 'Los saqueadores aceptan la tregua.', terminar_combate: true }))
+  await accionLibre(m, j, pid, 'Me rindo y les ofrezco las chapas')
+  assert.equal(m.ctx.db.partida(pid)!.mundo.combate, null)
+})
+
+test('combate: traicionar a un compañero sin traiciones habilitadas se avisa; con traiciones, hay tirada y daño', async () => {
+  const { m, j, pid } = await enJuego()
+  await aCombate(m, j, pid)
+  const { jug } = turnoActual(m, pid)
+  const otro = m.ctx.db.personajesVivos(pid).find((x) => x.jugador_id !== jug.id)!
+  m.mock.textos.intencion = JSON.stringify({ intencion: 'traicion', objetivo: otro.ficha.nombre, atributo: 'AGI', habilidad: 'armas_pequenas', dificultad: 2, motivo: 'Dispararle por la espalda' })
+  await accionLibre(m, j, pid, `Le disparo a ${otro.ficha.nombre}`)
+  assert.match(m.api.ultimo(GRUPO)!.html, /no se atacan entre sí/)
+
+  const b = await enJuego({ pvp: 'si' })
+  await aCombate(b.m, b.j, b.pid)
+  const t2 = turnoActual(b.m, b.pid)
+  const otro2 = b.m.ctx.db.personajesVivos(b.pid).find((x) => x.jugador_id !== t2.jug.id)!
+  b.m.mock.textos.intencion = JSON.stringify({ intencion: 'traicion', objetivo: otro2.ficha.nombre, atributo: 'AGI', habilidad: 'armas_pequenas', dificultad: 2, motivo: 'Dispararle por la espalda' })
+  const { p, uid } = await accionLibre(b.m, b.j, b.pid, `Le disparo a ${otro2.ficha.nombre}`)
+  const r = b.m.api.botonData(GRUPO, new RegExp(`^r:${b.pid}:${p.turno_n}:n`))!
+  b.m.ctx.rng = seq([1, 1, 20, 20])
+  await b.j.tocar(uid, r.data, GRUPO, r.msg.id)
+  const q = b.m.ctx.db.personaje(otro2.id)!
+  assert.ok(q.salud < q.salud_max)
+})
+
+test('combate: suicidio en acción libre pide confirmación y con Sí muere', async () => {
+  const { m, j, pid } = await enJuego()
+  await aCombate(m, j, pid)
+  m.mock.textos.intencion = '{"intencion":"muerte_propia"}'
+  const { p, uid } = await accionLibre(m, j, pid, 'Me vuelo la cabeza')
+  const pj = m.ctx.db.personajeVivoDe(m.ctx.db.jugador(p.turno_jugador_id!)!.id)!
+  const b = m.api.botonData(GRUPO, new RegExp(`^d:${pid}:${p.turno_n}:s`))!
+  await j.tocar(uid, b.data, GRUPO, b.msg.id)
+  assert.equal(m.ctx.db.personaje(pj.id)!.vivo, false)
+  assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, p.turno_jugador_id, 'el combate siguió')
+})
+
+test('combate: un NPC muerto no vuelve a aparecer como enemigo', async () => {
+  const { m, j, pid } = await enJuego()
+  const t = turnoActual(m, pid)
+  m.mock.cola.push(narrar({ cambios: { npcs: [{ id: 'campana', nombre: 'Campana', estado: 'muerto' }] } }))
+  await j.grupo(t.uid, 'Remato a Campana', t.p.turno_msg_id!)
+  const t2 = turnoActual(m, pid)
+  m.mock.cola.push(narrar({ combate: { enemigos: [{ plantilla_id: 'guardia', nombre: 'Campana', npc_id: 'campana' }, { plantilla_id: 'saqueador' }] } }))
+  await j.grupo(t2.uid, 'Sigo', t2.p.turno_msg_id!)
+  const c = m.ctx.db.partida(pid)!.mundo.combate!
+  assert.ok(!c.enemigos.some((e) => e.nombre === 'Campana'))
+})
+
+test('co-narrador: el que murió sigue en la ronda como voz del mundo', async () => {
+  const { m, j, pid } = await enJuego({}, [101, 102, 103], true)
+  m.mock.textos.intencion = '{"intencion":"muerte_propia"}'
+  const { p, uid, jug } = turnoActual(m, pid)
+  await j.grupo(uid, 'Me tiro al río radiactivo', p.turno_msg_id!)
+  await j.tocar(uid, m.api.botonData(GRUPO, new RegExp(`^d:${pid}:${p.turno_n}:s`))!.data, GRUPO)
+  delete m.mock.textos.intencion
+  for (let i = 0; i < 4 && m.ctx.db.partida(pid)!.turno_jugador_id !== jug.id; i++) await jugar(m, j, pid)
+  const p2 = m.ctx.db.partida(pid)!
+  assert.equal(p2.turno_jugador_id, jug.id, 'le vuelve a tocar')
+  assert.match(limpio(m.api.msgs.find((x) => x.id === p2.turno_msg_id)!.html), /voz del mundo/)
+  await j.grupo(uid, 'Se corre el rumor de un búnker lleno de agua limpia', p2.turno_msg_id!)
+  assert.match(m.mock.vistas.at(-1)!.sistema, /CO-NARRADOR/)
+  assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, jug.id)
+})
+
+test('sin sobrevivientes: pausa con salida; un personaje nuevo retoma solo; o el anfitrión termina', async () => {
+  const { m, j, pid } = await enJuego({}, [101, 102], true)
+  m.mock.textos.intencion = '{"intencion":"muerte_propia"}'
+  for (let i = 0; i < 2; i++) {
+    const { p, uid } = turnoActual(m, pid)
+    await j.grupo(uid, 'Me tiro', p.turno_msg_id!)
+    await j.tocar(uid, m.api.botonData(GRUPO, new RegExp(`^d:${pid}:${p.turno_n}:s`))!.data, GRUPO)
+  }
+  delete m.mock.textos.intencion
+  assert.equal(m.ctx.db.partida(pid)!.estado, 'PAUSADA')
+  assert.ok(delGrupo(m).some((x) => /No queda nadie en pie/.test(x.html)))
+  await j.grupo(101, '/reanudar')
+  assert.match(m.api.ultimo(GRUPO)!.html, /No queda nadie en pie/)
+  await j.crearPersonaje(101, pid)
+  const p = m.ctx.db.partida(pid)!
+  assert.equal(p.estado, 'EN_JUEGO')
+  assert.ok(p.turno_jugador_id, 'arrancó un turno')
+  await j.tocar(101, `b:${pid}:fin`, GRUPO)
+  assert.equal(m.ctx.db.partida(pid)!.estado, 'FINALIZADA')
+})
+
+test('objetos: lo que no está en el catálogo igual va a la mochila', () => {
+  const pjx = { ...construirPrueba(), inventario: [] } as Personaje
+  const r = aplicarCambios(u, mundoVacio(), [pjx], { objetos: [{ pj: 'P1', nombre_libre: 'Llave del casino', delta: 1 }] }, { enCombate: false })
+  assert.deepEqual(r.aplicados, ['Test recibe Llave del casino'])
+  assert.ok(pjx.inventario.some((i) => i.id === 'libre:Llave del casino'))
+})
+
+import { construirPersonaje, aplicarArquetipo } from '../src/motor/personaje.js'
+function construirPrueba(): Personaje {
+  const f = { origen: 'refugio', ...aplicarArquetipo(u, 'soldado'), nombre: 'Test', aspecto: '', frase: '', arma: 'pistola_10mm', respuestas: [] }
+  return { id: 1, partida_id: 1, jugador_id: 1, ...construirPersonaje(u, f) }
+}

@@ -7,11 +7,11 @@ import {
   habilidadesVacias, puntosAtributoLibres, puntosHabilidadLibres, subirAtributo, subirHabilidad, validarReparto,
 } from '../motor/personaje.js'
 import { generarTrasfondo, reaccionar } from '../dj/servicios.js'
-import { esc, recortar } from '../util.js'
+import { esc, recortar, textoIA } from '../util.js'
 import { fichaTexto } from '../telegram/textos.js'
 import { tecladoArmas, tecladoArquetipos, tecladoAtributos, tecladoHabilidades, tecladoMejora, tecladoOrigenes } from '../telegram/teclados.js'
 import { aGrupo, botonGrupo, refrescarTablero, registrar } from './comun.js'
-import { ajustarRitmo } from './turno.js'
+import { ajustarRitmo, iniciarTurno } from './turno.js'
 
 const PREGUNTAS = [
   '¿Qué te sacó de casa (o del refugio)?',
@@ -258,7 +258,7 @@ export async function textoCreacion(ctx: Ctx, from: TgUser, texto: string): Prom
       let prefijo = ''
       if (c.modo === 'entrevista') {
         const r = await reaccionar(ctx, PREGUNTAS[n], t)
-        if (r) prefijo = `🎙️ <i>${esc(r)}</i>\n\n`
+        if (r) prefijo = `🎙️ <i>${textoIA(r)}</i>\n\n`
       }
       return (await sigue(n < 2 ? `q${n + 1}` : 'arma', prefijo), true)
     }
@@ -288,8 +288,17 @@ async function confirmarPersonaje(ctx: Ctx, partida: Partida, j: Jugador, msgId:
   if (enJuego) {
     registrar(ctx, partida, j.id, 'sistema', `${pj.ficha.nombre} se une a la aventura.`, `${pj.ficha.nombre} se une al grupo.`)
     await aGrupo(ctx, partida, `🧑‍🚀 <b>${esc(pj.ficha.nombre)}</b> (${esc(j.nombre)}) se suma a la aventura.`)
-    if (partida.estado === 'PAUSADA') { partida.estado = 'EN_JUEGO'; ctx.db.guardarPartida(partida) }
+    const estabaPausada = partida.estado === 'PAUSADA'
+    if (estabaPausada) { partida.estado = 'EN_JUEGO'; ctx.db.guardarPartida(partida) }
     ajustarRitmo(ctx, partida.id)
+    // Si la partida estaba frenada (por ejemplo, porque no quedaba nadie en pie), sigue sola.
+    if (estabaPausada) {
+      const p2 = ctx.db.partida(partida.id)!
+      p2.turno_jugador_id = null
+      ctx.db.guardarPartida(p2)
+      await aGrupo(ctx, p2, '▶️ <b>La historia sigue.</b>')
+      await iniciarTurno(ctx, partida.id)
+    }
   } else {
     await aGrupo(ctx, partida, `✅ <b>${esc(j.nombre)}</b> ya tiene personaje.`)
   }

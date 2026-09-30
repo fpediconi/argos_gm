@@ -5,7 +5,7 @@ import { ErrorPresupuesto, crearMundo, decidirTurno, generarPremisas } from '../
 import { aplicarCambios } from '../motor/estado.js'
 import { vencimiento } from '../motor/turnos.js'
 import { DURACIONES, recalcularObjetivo, ritmoDe, ritmoNuevo, totalCapitulos } from '../motor/ritmo.js'
-import { esc, recortar } from '../util.js'
+import { esc, recortar, textoIA } from '../util.js'
 import { aGrupo, cargar, refrescarTablero, registrar, urlUnirse } from './comun.js'
 import { iniciarTurno } from './turno.js'
 
@@ -364,12 +364,12 @@ export async function empezarPartida(ctx: Ctx, pid: number, userId: string): Pro
     ctx.db.guardarPartida(partida)
     registrar(ctx, partida, null, 'narracion', s.narracion, s.cronica || 'Comienza la aventura.')
     const principal = partida.mundo.misiones.find((m) => m.principal)
-    await aGrupo(ctx, partida, `📖 <b>${esc(g.titulo)}</b>\n\n<i>${esc(s.narracion)}</i>${principal ? `\n\n🎯 <b>Objetivo:</b> ${esc(principal.texto)}` : ''}${partida.mundo.vinculos.length ? '\n\n🔗 <b>Vínculos</b>\n' + partida.mundo.vinculos.map((v) => '• ' + esc(v)).join('\n') : ''}`)
+    await aGrupo(ctx, partida, `📖 <b>${esc(g.titulo)}</b>\n\n<i>${textoIA(s.narracion)}</i>${principal ? `\n\n🎯 <b>Objetivo:</b> ${esc(principal.texto)}` : ''}${partida.mundo.vinculos.length ? '\n\n🔗 <b>Vínculos</b>\n' + partida.mundo.vinculos.map((v) => '• ' + esc(v)).join('\n') : ''}`)
   } catch (e) {
     ctx.log('apertura falló', (e as Error).message)
     if (e instanceof ErrorPresupuesto) await aGrupo(ctx, partida, '💸 Sin presupuesto para la apertura hoy. Los personajes ya están listos: la aventura empieza cuando se libere.')
     registrar(ctx, partida, null, 'narracion', g.gancho || g.premisa, 'Comienza la aventura.')
-    await aGrupo(ctx, partida, `📖 <b>${esc(g.titulo)}</b>\n\n<i>${esc(g.gancho || g.premisa)}</i>`)
+    await aGrupo(ctx, partida, `📖 <b>${esc(g.titulo)}</b>\n\n<i>${textoIA(g.gancho || g.premisa)}</i>`)
   }
   await refrescarTablero(ctx, pid)
   await iniciarTurno(ctx, pid)

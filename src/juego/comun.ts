@@ -85,8 +85,20 @@ export async function refrescarTablero(ctx: Ctx, pid: number): Promise<void> {
   }
   const id = await ctx.api.enviar(partida.chat_id, texto, { teclado, threadId: partida.thread_id, silencioso: true })
   partida.tablero_msg_id = id
+  await fijarSolo(ctx, partida, [id, partida.turno_msg_id])
   ctx.db.guardarPartida(partida)
-  await ctx.api.fijar(partida.chat_id, id)
+}
+
+/**
+ * Deja fijados solo estos mensajes (el tablero y el turno actual): desfija los que el bot había
+ * fijado antes y fija los nuevos. Evita que se acumulen fijados viejos.
+ */
+export async function fijarSolo(ctx: Ctx, partida: Partida, ids: (number | null | undefined)[]): Promise<void> {
+  const quedan = [...new Set(ids.filter((x): x is number => !!x))]
+  const antes = partida.mundo.fijados ?? []
+  for (const id of antes) if (!quedan.includes(id)) await ctx.api.desfijar(partida.chat_id, id)
+  for (const id of quedan) if (!antes.includes(id)) await ctx.api.fijar(partida.chat_id, id)
+  partida.mundo.fijados = quedan
 }
 
 export function pjDe(pjs: Personaje[], j: Jugador): Personaje | undefined {

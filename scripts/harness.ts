@@ -78,6 +78,9 @@ export class Jugadores {
       if (!ult) throw new Error('el bot no respondió en privado')
       const datos = (ult.teclado ?? []).flat().map((b) => b.callback_data ?? '')
       if (/^✅ ¡Personaje listo/.test(ult.html.replace(/<[^>]+>/g, ''))) return
+      // Con la partida en marcha, después de "Personaje listo" puede llegar otro aviso (por ejemplo "Te toca").
+      const jj = this.m.ctx.db.jugadorDeUsuario(pid, String(id))
+      if (jj && !jj.creacion && this.m.ctx.db.personajeVivoDe(jj.id) && i > 0) return
       const tocarLo = async (re: RegExp) => { const d = datos.find((x) => re.test(x)); if (!d) return false; await this.tocar(id, d, dm, ult.id); return true }
       if (datos.includes('c:md:r')) { await this.tocar(id, 'c:md:r', dm, ult.id); continue }
       if (datos.some((d) => d.startsWith('c:or:'))) { await this.tocar(id, `c:or:${opts.origen ?? 'refugio'}`, dm, ult.id); continue }

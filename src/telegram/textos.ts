@@ -1,7 +1,7 @@
 import type { Ctx } from '../ctx.js'
 import type { Jugador, Partida, Personaje } from '../motor/tipos.js'
 import { ATRIBUTOS } from '../motor/tipos.js'
-import { esc, fechaCorta, formatoDuracion } from '../util.js'
+import { barraVida, esc, fechaCorta, formatoDuracion } from '../util.js'
 import { saludMaxEfectiva } from '../motor/personaje.js'
 import { armaPrincipal, cargaMax, defensaDe, proteccionDe, probabilidadExito, semaforo, textoDificultad } from '../motor/reglas.js'
 import type { TiradaResuelta } from '../motor/tipos.js'
@@ -46,7 +46,8 @@ export function fichaTexto(ctx: Ctx, p: Personaje): string {
 export function inventarioTexto(ctx: Ctx, p: Personaje): string {
   const items = p.inventario.map((i) => {
     const d = ctx.u.objetos.find((o) => o.id === i.id) ?? ctx.u.armas.find((a) => a.id === i.id)
-    return `• ${esc(d?.nombre ?? i.id)}${i.n > 1 ? ' ×' + i.n : ''}`
+    const nombre = i.id.startsWith('libre:') ? i.id.slice(6) : d?.nombre ?? i.id
+    return `• ${esc(nombre)}${i.n > 1 ? ' ×' + i.n : ''}`
   })
   return `🎒 <b>Inventario de ${esc(p.ficha.nombre)}</b> (${cantidadItems(p)}/${cargaMax(p.ficha)})\n${items.join('\n') || '(vacío)'}\n🔩 Chapas: ${p.chapas}`
 }
@@ -88,10 +89,9 @@ export function tableroTexto(ctx: Ctx, partida: Partida, jugadores: Jugador[], p
     const info = pj ? ` — ${esc(pj.ficha.nombre)} ❤️${pj.salud}/${saludMaxEfectiva(pj)}${pj.condiciones.includes('caido') ? ' 🩸' : ''}` : j.estado === 'creando' ? ' — creando personaje' : ''
     l.push(`${ic} ${esc(j.nombre)}${info}`)
   }
-  if (partida.mundo.relojes.length) {
-    l.push('')
-    for (const r of partida.mundo.relojes) l.push(`⏰ ${esc(r.nombre)} ${barra(r.llenos, r.segmentos)} (${r.llenos}/${r.segmentos})`)
-  }
+  // Sin spoilers: los relojes con nombre son del DJ. Los jugadores ven la tensión y cuánto falta para el próximo evento.
+  const alertas = alertasTexto(partida)
+  if (alertas.length) l.push('', ...alertas)
   if (partida.mundo.impulso) l.push(`⚡ Impulso del grupo: ${partida.mundo.impulso}/3`)
   if (partida.estado === 'EN_JUEGO' && partida.turno_vence && partida.turno_vence !== SIN_LIMITE) {
     l.push('')
@@ -103,25 +103,68 @@ export function tableroTexto(ctx: Ctx, partida: Partida, jugadores: Jugador[], p
   return l.join('\n')
 }
 
-export function tarjetaTurnoTexto(ctx: Ctx, partida: Partida, j: Jugador, pj: Personaje | undefined): string {
+export function alertasTexto(partida: Partida): string[] {
+  const l: string[] = []
+  const r = partida.mundo.ritmo
+  if (r && (partida.estado === 'EN_JUEGO' || partida.estado === 'PAUSADA')) {
+    if (r.eventoPendiente) l.push('⚡ Algo está por pasar')
+    else if (!r.cierrePendiente) {
+      const faltan = Math.max(1, r.proximoEvento - r.turnos)
+      l.push(`⏳ Próximo evento: en ${faltan} turno${faltan === 1 ? '' : 's'}`)
+    }
+    if (r.cierrePendiente) l.push('🏁 El capítulo se cierra en este turno')
+  }
+  const amenaza = partida.mundo.relojes.find((x) => x.id === 'amenaza')
+  if (amenaza) l.push(`⚠️ Tensión ${barra(amenaza.llenos, amenaza.segmentos)}`)
+  return l
+}
+
+function lineaEnemigos(c: NonNullable<Partida['mundo']['combate']>): string {
+  return c.enemigos.filter((e) => e.salud > 0).map((e) => `👹 ${esc(e.nombre)} ${barraVida(e.salud, e.salud_max)} ${e.salud}/${e.salud_max}`).join('\n') || 'Sin enemigos en pie'
+}
+
+export function tarjetaTurnoTexto(ctx: Ctx, partida: Partida, j: Jugador, pj: Personaje | undefined, pjs: Personaje[] = []): string {
   const l: string[] = []
   const combate = partida.mundo.combate
   if (combate) {
-    l.push(`⚔️ <b>COMBATE — ronda ${combate.ronda}</b>`)
-    l.push(combate.enemigos.filter((e) => e.salud > 0).map((e) => `👹 ${esc(e.nombre)} ${e.salud}/${e.salud_max}`).join(' · ') || 'Sin enemigos')
+    l.push(`⚔️ <b>COMBATE · ronda ${combate.ronda}</b>`)
+    l.push(lineaEnemigos(combate))
+    const grupo = pjs.filter((p) => p.vivo).map((p) => `${esCaidoTxt(p) ? '🩸' : '🧑'} ${esc(p.ficha.nombre)} ${esCaidoTxt(p) ? 'caído' : `${barraVida(p.salud, saludMaxEfectiva(p))} ${p.salud}/${saludMaxEfectiva(p)}`}`)
+    if (grupo.length) l.push(grupo.join('\n'))
     l.push('')
   }
   l.push('━━━━━━━━━━━━━━')
   l.push(`🎯 <b>TURNO DE ${esc(j.nombre.toUpperCase())}</b>`)
-  if (pj) l.push(`${esc(pj.ficha.nombre)} · ❤️ ${pj.salud}/${saludMaxEfectiva(pj)}`)
+  if (pj && !combate) l.push(`${esc(pj.ficha.nombre)} · ❤️ ${pj.salud}/${saludMaxEfectiva(pj)}`)
+  if (pj && combate) l.push(esc(pj.ficha.nombre))
   l.push('━━━━━━━━━━━━━━')
   if (partida.turno_vence && partida.turno_vence !== SIN_LIMITE) {
     l.push(`⏱ Vence ${fechaCorta(partida.turno_vence, ctx.cfg.tzMin)}`)
   } else if (partida.config.plazoH === -1) {
     l.push('⚡ Skip directo: si tarda, cualquiera puede /saltear')
   }
-  l.push(combate ? `${mencion(j)}, elegí una acción con los botones.` : `✍️ ${mencion(j)}, <b>respondé a este mensaje</b> con lo que hacés (o <code>/a tu acción</code>).`)
+  l.push(combate ? `${mencion(j)}, elegí qué hacés.` : `✍️ ${mencion(j)}, <b>respondé a este mensaje</b> con lo que hacés (o <code>/a tu acción</code>).`)
   return l.join('\n')
+}
+
+const esCaidoTxt = (p: Personaje) => p.condiciones.includes('caido')
+
+/** Turno de un jugador sin personaje: juega como voz del mundo. */
+export function tarjetaCoNarradorTexto(ctx: Ctx, partida: Partida, j: Jugador): string {
+  void ctx
+  return [
+    '━━━━━━━━━━━━━━',
+    `🎙️ <b>TURNO DE ${esc(j.nombre.toUpperCase())}</b> · voz del mundo`,
+    '━━━━━━━━━━━━━━',
+    'Tu personaje ya no está, pero tu voz sí. Sugerí algo que pase en el mundo: un rumor, un NPC, un lugar, un giro. El DJ lo toma como inspiración (no está obligado a cumplirlo).',
+    '',
+    `✍️ ${mencion(j)}, <b>respondé a este mensaje</b> con tu sugerencia, o armá otro personaje.`,
+  ].join('\n')
+}
+
+/** Mensaje de inicio de combate: enemigos con barra de vida, sin números de reglas. */
+export function inicioCombateTexto(c: NonNullable<Partida['mundo']['combate']>, sorpresa: string): string {
+  return `⚔️ <b>¡COMBATE!</b>${sorpresa ? ' ' + esc(sorpresa) : ''}\n${lineaEnemigos(c)}`
 }
 
 /** Tarjeta antes de tirar: en lenguaje de mesa, sin la cuenta. */
@@ -195,7 +238,7 @@ export const AYUDA_GRUPO = `🎲 <b>Argos DJ — cómo se juega</b>
 /ausente 3d — avisás que no vas a estar · /volver
 /x — pedís cambiar el rumbo de la escena (anónimo)
 /regla tema — explica una regla · /tiradas — últimas tiradas
-/costo — gasto de IA · /config /final /pausa /reanudar /fin /libro — anfitrión`
+/costo — gasto de IA · /config /final /limpiar_fijados /pausa /reanudar /fin /libro — anfitrión`
 
 export const REGLAS: Record<string, string> = {
   prueba: 'Tirás 2d20. Cada dado menor o igual a tu TN (atributo + habilidad) es un éxito. Con especialidad, un dado menor o igual al rango de la habilidad vale 2 éxitos. Un 20 es una complicación. La dificultad (1 a 4) es cuántos éxitos necesitás.',
@@ -205,7 +248,7 @@ export const REGLAS: Record<string, string> = {
   combate: 'En combate cada jugador actúa en su turno con botones. El daño es fijo: arma + éxitos de sobra − protección del enemigo (mínimo 1). Al final de la ronda actúan los enemigos y el DJ narra todo junto.',
   salud: 'Salud = Resistencia + Suerte (+ bonus de origen). A 0 quedás Caído: un aliado puede levantarte con Medicina (dificultad 2). Al terminar el combate, según la letalidad, podés quedar herido o morir.',
   rads: 'Cada punto de radiación baja tu salud máxima hasta que lo curés (RadAway o Medicina). Necróticos, supermutantes y robots son inmunes.',
-  relojes: 'Un reloj es una barra de tensión que avanza con las decisiones del grupo (no con el tiempo real). Cuando se llena, pasa algo.',
+  relojes: 'La tensión sube con las decisiones del grupo y con el paso de las rondas (no con el tiempo real). Cuando se llena, la historia entra en su clímax. El tablero también avisa cuántos turnos faltan para el próximo evento, sin adelantar cuál.',
   turnos: 'Cada uno juega en su turno. Si el plazo vence, cualquiera puede proponer saltear con /saltear y los demás votan. También podés avisar con /ausente.',
   letalidad: 'Suave: nadie muere, solo secuelas. Normal: un caído que nadie levanta tira Suerte; si falla, muere. Hardcore: a 0 salud, muerte. Fuera de combate también se puede morir (si lo decidís vos o por una tirada con riesgo mortal).',
 }

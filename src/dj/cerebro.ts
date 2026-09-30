@@ -15,6 +15,7 @@ export interface SalidaNarrar {
   cambios?: Cambios
   combate?: { enemigos: PedidoEnemigos[]; sorpresa?: 'jugadores' | 'enemigos' | 'ninguna' }
   cerrar_capitulo?: boolean
+  terminar_combate?: boolean
   vinculos?: string[]
 }
 
@@ -164,6 +165,7 @@ export function normalizarSalida(a: any): SalidaNarrar {
   if (a?.cambios && typeof a.cambios === 'object') s.cambios = a.cambios
   if (a?.combate?.enemigos && Array.isArray(a.combate.enemigos)) s.combate = { enemigos: a.combate.enemigos, sorpresa: a.combate.sorpresa }
   if (a?.cerrar_capitulo === true) s.cerrar_capitulo = true
+  if (a?.terminar_combate === true) s.terminar_combate = true
   if (Array.isArray(a?.vinculos)) s.vinculos = a.vinculos.map(String).slice(0, 8)
   return s
 }

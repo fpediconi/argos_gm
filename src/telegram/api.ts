@@ -13,6 +13,7 @@ export interface TgMessage {
   migrate_to_chat_id?: number
   migrate_from_chat_id?: number
   new_chat_members?: TgUser[]
+  pinned_message?: { message_id: number }
   voice?: TgAudio
   audio?: TgAudio
 }
@@ -42,6 +43,8 @@ export interface ApiTelegram {
   responderCallback(id: string, texto?: string, alerta?: boolean): Promise<void>
   fijar(chatId: string, messageId: number): Promise<boolean>
   desfijar(chatId: string, messageId: number): Promise<void>
+  desfijarTodos(chatId: string): Promise<void>
+  borrar(chatId: string, messageId: number): Promise<void>
   /** Encuesta nativa (no anónima, para saber quién votó). */
   encuesta(chatId: string, pregunta: string, opciones: string[], op?: OpcionesEnvio): Promise<{ messageId: number; pollId: string }>
   cerrarEncuesta(chatId: string, messageId: number): Promise<void>
@@ -191,6 +194,22 @@ export class TelegramReal implements ApiTelegram {
       await this.llamar('unpinChatMessage', { chat_id: chatId, message_id: messageId })
     } catch {
       /* ya no estaba fijado o no hay permiso */
+    }
+  }
+
+  async desfijarTodos(chatId: string): Promise<void> {
+    try {
+      await this.llamar('unpinAllChatMessages', { chat_id: chatId })
+    } catch {
+      /* sin permiso */
+    }
+  }
+
+  async borrar(chatId: string, messageId: number): Promise<void> {
+    try {
+      await this.llamar('deleteMessage', { chat_id: chatId, message_id: messageId })
+    } catch {
+      /* sin permiso o ya borrado */
     }
   }
 

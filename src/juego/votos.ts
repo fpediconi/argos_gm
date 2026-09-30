@@ -22,26 +22,25 @@ export async function proponerSaltear(ctx: Ctx, pid: number, userId: string): Pr
   if (!solicitante) return 'Solo jugadores de la partida pueden proponerlo.'
   const objetivo = jugadores.find((j) => j.id === partida.turno_jugador_id)!
   if (objetivo.id === solicitante.id) return 'Si no vas a poder jugar, usá /pasar o /ausente.'
-  // Skip directo: no hay que esperar a que venza ni votar.
-  if (partida.config.plazoH === -1) {
-    if (partida.paso.tipo === 'narrando') return 'El DJ está narrando: esperá un segundo.'
-    await saltarTurno(ctx, pid, 'directo')
-    return
-  }
+  if (partida.paso.tipo === 'narrando') return 'El DJ está narrando: esperá un segundo.'
   if (ctx.db.votacionAbierta(pid)) return 'Ya hay una votación abierta.'
   const ahora = ctx.reloj.ahora()
+  const skip = partida.config.plazoH === -1
   const vence = partida.turno_vence === SIN_LIMITE ? partida.turno_desde + 48 * H : partida.turno_vence
-  if (ahora < vence) return `Todavía no venció el turno (vence en ${formatoDuracion(vence - ahora)}).`
+  // Skip directo: no hay que esperar a que venza el turno (pero se vota igual).
+  if (!skip && ahora < vence) return `Todavía no venció el turno (vence en ${formatoDuracion(vence - ahora)}).`
 
   const vs = votantes(ctx, pid, objetivo.id)
-  if (vs.length === 0) {
-    await saltarTurno(ctx, pid, 'voto')
+  // Con menos de 3 jugadores no hay votación que valga: se saltea directo.
+  if (vs.length < 2) {
+    await saltarTurno(ctx, pid, skip ? 'directo' : 'voto')
     return
   }
   const v = ctx.db.crearVotacion(pid, 'saltear', objetivo.id, ahora, ahora + CIERRE_H * H)
   v.votos[userId] = 's'
   const pj = pjDe(pjs, objetivo)
-  v.msg_id = await aGrupo(ctx, partida, `🗳️ <b>¿Salteamos el turno de ${mencion(objetivo)}${pj ? ' (' + esc(pj.ficha.nombre) + ')' : ''}?</b>\nSu turno venció hace ${formatoDuracion(ahora - vence)}. Si vota que sí la mayoría, su personaje se queda cubriendo la retaguardia (sin riesgos ni botín). Si ${esc(objetivo.nombre)} juega antes, la votación se cancela.\nCierra en ${CIERRE_H} h.`, { teclado: tecladoVoto(v.id) })
+  const porque = skip ? 'Skip directo: no hace falta esperar a que venza.' : `Su turno venció hace ${formatoDuracion(ahora - vence)}.`
+  v.msg_id = await aGrupo(ctx, partida, `🗳️ <b>¿Salteamos el turno de ${mencion(objetivo)}${pj ? ' (' + esc(pj.ficha.nombre) + ')' : ''}?</b>\n${porque} Si vota que sí la mayoría, su personaje se queda cubriendo la retaguardia (sin riesgos ni botín). Si ${esc(objetivo.nombre)} juega antes, la votación se cancela.\nCierra en ${CIERRE_H} h.`, { teclado: tecladoVoto(v.id) })
   ctx.db.guardarVotacion(v)
   return resolver(ctx, v, false)
 }
@@ -72,7 +71,7 @@ async function resolver(ctx: Ctx, v: Votacion, cerrada: boolean): Promise<string
   }
   // Si el turno ya cambió (el afectado jugó), no hay nada que saltear.
   if (r === 'pasa' && partida.turno_jugador_id === v.objetivo_id && partida.estado === 'EN_JUEGO') {
-    await saltarTurno(ctx, v.partida_id, 'voto')
+    await saltarTurno(ctx, v.partida_id, partida.config.plazoH === -1 ? 'directo' : 'voto')
   }
 }
 
