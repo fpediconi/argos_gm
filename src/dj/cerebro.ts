@@ -6,7 +6,7 @@ import { ATRIBUTOS } from '../motor/tipos.js'
 import { sleep } from '../util.js'
 
 export type RolIA = 'narrador' | 'util' | 'guionista'
-export type Tarea = 'turno' | 'apertura' | 'guion' | 'premisas' | 'trasfondo' | 'reaccion' | 'resumen' | 'radio' | 'epilogo' | 'ronda_combate' | 'prueba'
+export type Tarea = 'turno' | 'apertura' | 'guion' | 'premisas' | 'intencion' | 'trasfondo' | 'reaccion' | 'resumen' | 'radio' | 'epilogo' | 'ronda_combate' | 'prueba'
 
 export interface SalidaNarrar {
   narracion: string

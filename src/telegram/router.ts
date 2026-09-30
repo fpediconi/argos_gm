@@ -5,7 +5,7 @@ import { AYUDA_GRUPO, partyTexto } from './textos.js'
 import { esc, recortar } from '../util.js'
 import { callbackConfig, callbackWizard, comandoConfig, comandoNueva, empezarPartida, premisaEscrita } from '../juego/setup.js'
 import { callbackCreacion, callbackMejora, contextoDe, esperaTextoCreacion, textoCreacion, unirse } from '../juego/creacion.js'
-import { avisarFueraDeTurno, confirmarMuerte, procesarAccion, reintentarNarracion, resolverTirada } from '../juego/turno.js'
+import { avisarFueraDeTurno, confirmarDecision, procesarAccion, reintentarNarracion, resolverTirada } from '../juego/turno.js'
 import { accionCombate, elegirAliado, elegirObjetivo, elegirObjeto } from '../juego/combate.js'
 import { proponerSaltear, votar } from '../juego/votos.js'
 import { cmdCerrarVotacion, iniciarVotacion, votoEncuesta } from '../juego/decisiones.js'
@@ -362,7 +362,7 @@ async function callback(ctx: Ctx, cb: TgCallback): Promise<void> {
         case 'g': return callbackConfig(ctx, P, userId, msgId, r[1], r[2])
         case 'b': return r[1] === 'empezar' ? empezarPartida(ctx, P, userId) : undefined
         case 'r': return resolverTirada(ctx, P, userId, num(r[1]), r[2], msgId)
-        case 'd': return confirmarMuerte(ctx, P, userId, num(r[1]), r[2] === 's')
+        case 'd': return confirmarDecision(ctx, P, userId, num(r[1]), r[2] === 's')
         case 'a': return accionCombate(ctx, P, userId, num(r[1]), r[2])
         case 't': return elegirObjetivo(ctx, P, userId, num(r[1]), r[2])
         case 'o': return elegirObjeto(ctx, P, userId, num(r[1]), r[2])

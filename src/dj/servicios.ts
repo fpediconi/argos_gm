@@ -1,10 +1,10 @@
 import type { Ctx } from '../ctx.js'
-import type { GuionMaestro, Jugador, Partida, Personaje, Ficha } from '../motor/tipos.js'
+import type { GuionMaestro, Intencion, Jugador, Partida, Personaje, Ficha, TipoIntencion } from '../motor/tipos.js'
 import type { Decision, RolIA } from './cerebro.js'
 import { parsearGuion } from './cerebro.js'
 import { sistemaTurno, fichaCompacta } from './contexto.js'
 import { estadoPresupuesto } from './presupuesto.js'
-import { PROMPT_EPILOGO, PROMPT_GUIONISTA, PROMPT_PREMISAS, PROMPT_RADIO, PROMPT_REACCION, PROMPT_RESUMEN, PROMPT_RONDA, PROMPT_TRASFONDO } from './prompts.js'
+import { PROMPT_EPILOGO, PROMPT_GUIONISTA, PROMPT_INTENCION, PROMPT_PREMISAS, PROMPT_RADIO, PROMPT_REACCION, PROMPT_RESUMEN, PROMPT_RONDA, PROMPT_TRASFONDO } from './prompts.js'
 import { DURACIONES } from '../motor/ritmo.js'
 import { recortar } from '../util.js'
 
@@ -140,4 +140,32 @@ export async function narrarRondaCombate(ctx: Ctx, partida: Partida, pjs: Person
   const sistema = sistemaTurno(ctx, partida, pjs, jugadores, { economico: pres.nivel === 'economico' }) + '\n\n' + PROMPT_RONDA
   const usuario = `Registro mecánico de la ronda:\n${lineas.join('\n')}\n${cierre}`
   return ctx.cerebro.texto({ tarea: 'ronda_combate', rol: pres.nivel === 'economico' ? 'util' : 'narrador', partidaId: partida.id, sistema, usuario, maxSalida: 600 })
+}
+
+/**
+ * Palabras que pueden indicar una acción drástica. Solo si aparece alguna se gasta la llamada
+ * (barata) al clasificador; el resto de las acciones van directo al narrador.
+ */
+const PREFILTRO = /(\bmat(o|a|ar|arlo|arla|arme|arte)\b|asesin|degoll|degüell|apuñal|acuchill|ejecut|ahorc|suicid|\bme tiro\b|tirarme|\bme mato\b|matarme|terminar con todo|quitarme la vida|me dejo morir|me sacrific|sacrificarme|me pego un tiro|volarle|le pego un tiro|le disparo|\bme voy\b|me largo|me rajo|me abro|abandon|dejo el grupo|dejo a los|me separo|me paso|pasarme|traicion|traiciono|les cuento todo|le cuento todo|delat|vendo al grupo|entrego al grupo|me uno a)/i
+
+export function podriaSerDrastica(texto: string): boolean {
+  return PREFILTRO.test(texto)
+}
+
+const TIPOS: TipoIntencion[] = ['muerte_propia', 'matar', 'abandonar', 'traicion', 'otra']
+
+/** Clasifica una acción drástica. Ante cualquier error devuelve "otra" (el turno sigue normal). */
+export async function clasificarIntencion(ctx: Ctx, partida: Partida, pj: Personaje, texto: string): Promise<Intencion> {
+  if (!podriaSerDrastica(texto)) return { tipo: 'otra' }
+  if (estadoPresupuesto(ctx, partida.id).nivel === 'parado') return { tipo: 'otra' }
+  try {
+    const npcs = partida.mundo.npcs.filter((n) => n.estado !== 'muerto').map((n) => n.nombre).join(', ')
+    const usuario = `Personaje que actúa: ${pj.ficha.nombre}. NPC en escena: ${npcs || 'ninguno'}.\nAcción: ${texto}`
+    const txt = await ctx.cerebro.texto({ tarea: 'intencion', rol: 'util', partidaId: partida.id, sistema: PROMPT_INTENCION, usuario, maxSalida: 300, json: true })
+    const j = JSON.parse(txt.replace(/^```(?:json)?\s*|\s*```$/g, ''))
+    const tipo = TIPOS.includes(j.intencion) ? (j.intencion as TipoIntencion) : 'otra'
+    return { tipo, objetivo: recortar(String(j.objetivo ?? ''), 60) || undefined }
+  } catch {
+    return { tipo: 'otra' }
+  }
 }

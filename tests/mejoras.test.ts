@@ -231,7 +231,7 @@ test('muerte elegida: pide confirmación; con "no" el personaje sigue vivo', asy
   const b = m.api.botonData(GRUPO, new RegExp(`^d:${pid}:${p.turno_n}:n`))
   assert.ok(b, 'hay botones de confirmación')
   await j.tocar(102 === Number(jug.user_id) ? 101 : 102, b.data, GRUPO, b.msg.id) // otro no puede decidir
-  assert.equal(m.ctx.db.partida(pid)!.paso.tipo, 'confirmando_muerte')
+  assert.equal(m.ctx.db.partida(pid)!.paso.tipo, 'confirmando')
   await j.tocar(Number(jug.user_id), b.data, GRUPO, b.msg.id)
   assert.equal(m.ctx.db.personaje(pj.id)!.vivo, true)
 })
@@ -352,4 +352,138 @@ test('partida vieja (sin ritmo ni objetivo): sigue andando y se completa sola', 
   assert.ok(d.mundo.ritmo && d.mundo.ritmo.turnos > 0)
   assert.ok(d.mundo.misiones.some((x) => x.principal))
   assert.equal(d.config.plazoH, -1)
+})
+
+// ------------------------------------------------------------------ acciones drásticas (v2)
+
+import { podriaSerDrastica } from '../src/dj/servicios.js'
+import { rngSecuencia as seq } from '../src/motor/dados.js'
+
+function turnoActual(m: Mundo, pid: number) {
+  const p = m.ctx.db.partida(pid)!
+  const jug = m.ctx.db.jugador(p.turno_jugador_id!)!
+  return { p, jug, uid: Number(jug.user_id), pj: m.ctx.db.personajeVivoDe(jug.id)! }
+}
+
+test('prefiltro: solo las acciones con palabras de riesgo pasan por el clasificador', () => {
+  assert.equal(podriaSerDrastica('Me asomo por la ventana'), false)
+  assert.equal(podriaSerDrastica('Le compro agua al comerciante'), false)
+  assert.equal(podriaSerDrastica('Me tiro del edificio más alto'), true)
+  assert.equal(podriaSerDrastica('Mato al guardia'), true)
+  assert.equal(podriaSerDrastica('Me voy, que se arreglen solos'), true)
+  assert.equal(podriaSerDrastica('Me paso al bando de los saqueadores y les cuento todo'), true)
+})
+
+test('suicidio: primero pregunta Sí/No (sin narrar); con Sí muere, se narra y avanza el turno', async () => {
+  const { m, j, pid } = await enJuego()
+  m.mock.textos.intencion = '{"intencion":"muerte_propia"}'
+  const { p, uid, pj, jug } = turnoActual(m, pid)
+  const vistas = m.mock.vistas.length
+  await j.grupo(uid, 'Me tiro del edificio más alto', p.turno_msg_id!)
+  assert.equal(m.mock.vistas.length, vistas, 'no narra antes de confirmar')
+  const b = m.api.botonData(GRUPO, new RegExp(`^d:${pid}:${p.turno_n}:s`))!
+  assert.ok(b)
+  await j.tocar(uid, b.data, GRUPO, b.msg.id)
+  assert.equal(m.ctx.db.personaje(pj.id)!.vivo, false)
+  assert.match(m.mock.vistas.at(-1)!.sistema, /FINAL DE/)
+  assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, jug.id)
+})
+
+test('suicidio: con No sigue vivo, se narra que se frena y avanza el turno', async () => {
+  const { m, j, pid } = await enJuego()
+  m.mock.textos.intencion = '{"intencion":"muerte_propia"}'
+  const { p, uid, pj, jug } = turnoActual(m, pid)
+  await j.grupo(uid, 'Me tiro del edificio', p.turno_msg_id!)
+  const b = m.api.botonData(GRUPO, new RegExp(`^d:${pid}:${p.turno_n}:n`))!
+  await j.tocar(uid, b.data, GRUPO, b.msg.id)
+  assert.equal(m.ctx.db.personaje(pj.id)!.vivo, true)
+  assert.match(m.mock.vistas.at(-1)!.sistema, /a último momento se frenó/)
+  assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, jug.id)
+})
+
+async function conNora(m: Mundo, j: Jugadores, pid: number) {
+  const t = turnoActual(m, pid)
+  m.mock.cola.push(narrar({ cambios: { npcs: [{ id: 'nora', nombre: 'Nora', actitud: 'desconfiada' }] } }))
+  await j.grupo(t.uid, 'Saludo a la mujer', t.p.turno_msg_id!)
+}
+
+test('matar: siempre hay tirada; si sale, Nora muere aunque la IA no lo marque', async () => {
+  const { m, j, pid } = await enJuego()
+  await conNora(m, j, pid)
+  m.mock.textos.intencion = '{"intencion":"matar","objetivo":"Nora"}'
+  const { p, uid } = turnoActual(m, pid)
+  await j.grupo(uid, 'Le pego un tiro a Nora', p.turno_msg_id!)
+  const r = m.api.botonData(GRUPO, new RegExp(`^r:${pid}:${p.turno_n}:n`))!
+  assert.match(limpio(r.msg.html), /matar a Nora/i)
+  m.ctx.rng = seq([1, 1])
+  m.mock.cola.push(narrar({ narracion: 'Dispara.' }))
+  await j.tocar(uid, r.data, GRUPO, r.msg.id)
+  assert.deepEqual(m.ctx.db.partida(pid)!.mundo.muertos, ['Nora'])
+})
+
+test('matar: si la tirada falla, Nora sobrevive aunque la IA quiera matarla', async () => {
+  const { m, j, pid } = await enJuego()
+  await conNora(m, j, pid)
+  m.mock.textos.intencion = '{"intencion":"matar","objetivo":"Nora"}'
+  const { p, uid } = turnoActual(m, pid)
+  await j.grupo(uid, 'Mato a Nora', p.turno_msg_id!)
+  const r = m.api.botonData(GRUPO, new RegExp(`^r:${pid}:${p.turno_n}:n`))!
+  m.ctx.rng = seq([19, 18])
+  m.mock.cola.push(narrar({ cambios: { npcs: [{ id: 'nora', nombre: 'Nora', estado: 'muerto' }] } }))
+  await j.tocar(uid, r.data, GRUPO, r.msg.id)
+  assert.equal(m.ctx.db.partida(pid)!.mundo.muertos?.length ?? 0, 0)
+  assert.match(m.mock.vistas.at(-1)!.sistema, /la tirada FALLÓ/)
+})
+
+test('matar a otro personaje con traiciones apagadas: se avisa y no hay tirada', async () => {
+  const { m, j, pid } = await enJuego()
+  const { p, uid, jug } = turnoActual(m, pid)
+  const otro = m.ctx.db.personajesVivos(pid).find((x) => x.jugador_id !== jug.id)!
+  m.mock.textos.intencion = JSON.stringify({ intencion: 'matar', objetivo: otro.ficha.nombre })
+  await j.grupo(uid, `Mato a ${otro.ficha.nombre}`, p.turno_msg_id!)
+  assert.match(m.api.ultimo(GRUPO)!.html, /no se atacan entre sí/)
+  assert.equal(m.ctx.db.partida(pid)!.turno_jugador_id, jug.id, 'sigue siendo su turno')
+})
+
+test('abandono: el DJ intenta convencer, después botones; "me voy" lo saca de la historia', async () => {
+  const { m, j, pid } = await enJuego()
+  m.mock.textos.intencion = '{"intencion":"abandonar"}'
+  const { p, uid, pj, jug } = turnoActual(m, pid)
+  await j.grupo(uid, 'Me voy, que se arreglen solos', p.turno_msg_id!)
+  assert.match(m.mock.vistas.at(-1)!.sistema, /QUIERE IRSE DEL GRUPO/)
+  const b = m.api.botonData(GRUPO, new RegExp(`^d:${pid}:${p.turno_n}:s`))!
+  assert.match(b.text, /Me voy igual/)
+  await j.tocar(uid, b.data, GRUPO, b.msg.id)
+  const pjDespues = m.ctx.db.personaje(pj.id)!
+  assert.equal(pjDespues.vivo, false)
+  assert.deepEqual(pjDespues.condiciones, ['se fue'])
+  assert.match(m.mock.vistas.at(-1)!.sistema, /DECIDIÓ IRSE/)
+  const dm = m.api.msgs.filter((x) => x.chatId === jug.dm_chat_id).at(-1)!
+  assert.match(dm.teclado![0][0].text, /Crear otro personaje/)
+  assert.notEqual(m.ctx.db.partida(pid)!.turno_jugador_id, jug.id)
+})
+
+test('abandono: "me quedo" narra el cambio de opinión y sigue jugando', async () => {
+  const { m, j, pid } = await enJuego()
+  m.mock.textos.intencion = '{"intencion":"abandonar"}'
+  const { p, uid, pj } = turnoActual(m, pid)
+  await j.grupo(uid, 'Me largo de acá', p.turno_msg_id!)
+  const b = m.api.botonData(GRUPO, new RegExp(`^d:${pid}:${p.turno_n}:n`))!
+  await j.tocar(uid, b.data, GRUPO, b.msg.id)
+  assert.equal(m.ctx.db.personaje(pj.id)!.vivo, true)
+  assert.match(m.mock.vistas.at(-1)!.sistema, /cambia de opinión y se queda/)
+})
+
+test('traición: queda como hecho y la escena siguiente trae la consecuencia', async () => {
+  const { m, j, pid } = await enJuego()
+  m.mock.textos.intencion = '{"intencion":"traicion","objetivo":"los Hijos del Puerto"}'
+  const { p, uid, pj } = turnoActual(m, pid)
+  m.mock.cola.push(narrar({ narracion: 'Habla.' }))
+  await j.grupo(uid, 'Me paso a los Hijos del Puerto y les cuento todo', p.turno_msg_id!)
+  delete m.mock.textos.intencion
+  assert.ok(m.ctx.db.partida(pid)!.mundo.decisiones?.some((d) => d.includes(`${pj.ficha.nombre} traicionó`)))
+  await jugar(m, j, pid, 'Miro alrededor')
+  const sistema = m.mock.vistas.at(-1)!.sistema
+  assert.match(sistema, /CONSECUENCIA DE LA TRAICIÓN/)
+  assert.match(sistema, /Hijos del Puerto/)
 })

@@ -182,7 +182,7 @@ export function esNpcMuerto(mundo: Mundo, nombre: string): boolean {
   return (mundo.muertos ?? []).some((m) => m.toLowerCase() === nombre.toLowerCase())
 }
 
-export function marcarNpcMuerto(mundo: Mundo, nombre: string, res?: ResultadoCambios): void {
+export function marcarNpcMuerto(mundo: Mundo, nombre: string, res?: Pick<ResultadoCambios, 'aplicados'>): void {
   mundo.muertos = mundo.muertos ?? []
   if (!esNpcMuerto(mundo, nombre)) {
     mundo.muertos.push(nombre)

@@ -122,3 +122,8 @@ export function tecladoMejora(ctx: Ctx, capitulo: number): Teclado {
 export function tecladoMuerte(pid: number, turnoN: number, nombre: string): Teclado {
   return [[{ text: `☠️ Sí, ${nombre} muere`, callback_data: `d:${pid}:${turnoN}:s` }], [{ text: '↩️ No, me arrepiento', callback_data: `d:${pid}:${turnoN}:n` }]]
 }
+
+/** Después del intento de convencer: el jugador decide si su personaje se va. */
+export function tecladoAbandono(pid: number, turnoN: number): Teclado {
+  return [[{ text: '🚶 Me voy igual', callback_data: `d:${pid}:${turnoN}:s` }], [{ text: '🤝 Me quedo', callback_data: `d:${pid}:${turnoN}:n` }]]
+}

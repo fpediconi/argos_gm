@@ -1,10 +1,10 @@
 import type { Ctx } from '../ctx.js'
-import type { Jugador, Partida, Personaje, PedidoTirada, TiradaResuelta } from '../motor/tipos.js'
+import type { Intencion, Jugador, Partida, Personaje, PedidoTirada, TiradaResuelta } from '../motor/tipos.js'
 import type { SalidaNarrar } from '../dj/cerebro.js'
-import { ErrorPresupuesto, decidirTurno, epilogo, recomprimirResumen, transmisionRadio } from '../dj/servicios.js'
-import { aplicarCambios, buscarPj, claveJugador, npcsVivos } from '../motor/estado.js'
+import { ErrorPresupuesto, clasificarIntencion, decidirTurno, epilogo, recomprimirResumen, transmisionRadio } from '../dj/servicios.js'
+import { aplicarCambios, buscarPj, claveJugador, esNpcMuerto, marcarNpcMuerto, npcsVivos } from '../motor/estado.js'
 import { esCaido } from '../motor/personaje.js'
-import { resolverPrueba, tnDe, type Extra } from '../motor/reglas.js'
+import { armaPrincipal, resolverPrueba, tnDe, type Extra } from '../motor/reglas.js'
 import { crearCombate, resolverCaidos } from '../motor/combate.js'
 import { siguienteJugador, vencimiento } from '../motor/turnos.js'
 import {
@@ -12,12 +12,15 @@ import {
 } from '../motor/ritmo.js'
 import { esc, recortar } from '../util.js'
 import { mencion, resultadoTiradaTexto, tarjetaTiradaTexto, tarjetaTurnoTexto } from '../telegram/textos.js'
-import { tecladoInfo, tecladoMejora, tecladoMuerte, tecladoTiradaBotones } from '../telegram/teclados.js'
+import { tecladoAbandono, tecladoInfo, tecladoMejora, tecladoMuerte, tecladoTiradaBotones } from '../telegram/teclados.js'
 import { aGrupo, aPrivado, botonGrupo, botonPrivado, cargar, pjDe, refrescarTablero, registrar, urlUnirse } from './comun.js'
 import { comenzarCombate, tecladoCombateDe } from './combate.js'
 import { exportarLibro } from '../export/libro.js'
 import { cancelarObsoletas } from './votos.js'
-import { INSTRUCCION_DESENLACE, INSTRUCCION_DESENLACE_FINAL } from '../dj/prompts.js'
+import {
+  INSTRUCCION_CONVENCER, INSTRUCCION_DESENLACE, INSTRUCCION_DESENLACE_FINAL, INSTRUCCION_MATAR, INSTRUCCION_MUERTE_ARREPENTIDA,
+  INSTRUCCION_MUERTE_CONFIRMADA, INSTRUCCION_SE_QUEDA, INSTRUCCION_SE_VA, INSTRUCCION_TRAICION,
+} from '../dj/prompts.js'
 
 const MAX_ACCION = 600
 
@@ -138,7 +141,7 @@ export async function saltarTurno(ctx: Ctx, pid: number, motivo: MotivoSalto): P
   registrar(ctx, partida, j.id, 'sistema', `Turno de ${nombre} salteado ${razon}.`, `${nombre} se queda cubriendo la retaguardia.`)
   await aGrupo(ctx, partida, `😴 Turno de <b>${esc(nombre)}</b> salteado ${razon}: se queda cubriendo la retaguardia (sin riesgos ni botín).${j.estado === 'dormido' ? ' Queda 💤 dormido.' : ''}`)
   if (partida.mundo.combate && pj) partida.mundo.combate.orden.push(j.id)
-  partida.mundo.muertePendiente = null
+  partida.mundo.confirmacion = null
   partida.paso = { tipo: 'libre' }
   ctx.db.guardarPartida(partida)
   await avanzarTurno(ctx, pid)
@@ -188,29 +191,62 @@ export async function procesarAccion(ctx: Ctx, pid: number, userId: string, text
   const texto = recortar(textoCrudo.replace(/[<>]/g, ' ').replace(/\s+/g, ' '), MAX_ACCION)
   if (!texto) return
 
+  // Acciones drásticas: el motor decide el flujo (confirmar, tirar, convencer); la IA solo narra.
+  const intencion: Intencion = enCombate ? { tipo: 'otra' } : await clasificarIntencion(ctx, partida, pj, texto)
+  if (intencion.tipo === 'matar') {
+    const objetivoPj = intencion.objetivo ? buscarPj(pjs.filter((x) => x.id !== pj.id), intencion.objetivo) : undefined
+    if (objetivoPj && !partida.config.pvp) {
+      await aGrupo(ctx, partida, `🗡️ En esta partida los personajes no se atacan entre sí. El anfitrión puede habilitar las traiciones con /config. ${mencion(j)}, contá otra acción.`, { responderA })
+      return
+    }
+  }
   registrar(ctx, partida, j.id, 'accion', `${pj.ficha.nombre}: ${texto}`)
-  partida.paso = { tipo: 'narrando', accion: texto, jugadorId: j.id }
+  partida.paso = { tipo: 'narrando', accion: texto, jugadorId: j.id, intencion }
   ctx.db.guardarPartida(partida)
-  await narrarAccion(ctx, pid, j, pj, texto, undefined)
+  switch (intencion.tipo) {
+    case 'muerte_propia':
+      if (partida.config.letalidad === 'suave') {
+        return narrarAccion(ctx, pid, j, pj, texto, undefined, { extra: `En esta mesa (letalidad suave) los personajes no mueren: el intento de ${pj.ficha.nombre} no termina en muerte (lo frenan, falla o sobrevive con secuelas). Narralo con peso.` })
+      }
+      return pedirConfirmacion(ctx, pid, j, pj, 'muerte')
+    case 'matar':
+      return intentoDeMatar(ctx, pid, j, pj, texto, intencion)
+    case 'abandonar':
+      return narrarAccion(ctx, pid, j, pj, texto, undefined, { extra: INSTRUCCION_CONVENCER(pj.ficha.nombre), convencer: true, intencion })
+    default:
+      return narrarAccion(ctx, pid, j, pj, texto, undefined, { intencion })
+  }
 }
 
-async function narrarAccion(ctx: Ctx, pid: number, j: Jugador, pj: Personaje, texto: string, tirada: TiradaResuelta | undefined, extraAdicional?: string, msgTirada?: number): Promise<void> {
+interface OpNarrar {
+  extra?: string
+  msgTirada?: number
+  intencion?: Intencion
+  /** La narración es un intento de convencer: no cierra el turno, pide confirmación. */
+  convencer?: boolean
+  notas?: string[]
+}
+
+async function narrarAccion(ctx: Ctx, pid: number, j: Jugador, pj: Personaje, texto: string, tirada: TiradaResuelta | undefined, op: OpNarrar = {}): Promise<void> {
   const { partida, jugadores, pjs } = cargar(ctx, pid)
   await ctx.api.escribiendo(partida.chat_id, partida.thread_id)
   let usuario = `<accion jugador="${pj.ficha.nombre} (${claveJugador(pj)})">${texto}</accion>`
   if (tirada) usuario += `\n<resultado_tirada>${resumenTirada(ctx, pj, tirada)}</resultado_tirada>\nNarrá exactamente ese resultado y cerrá el turno con "narrar".`
   const ritmo = ritmoDe(partida, jugadores.filter((x) => x.estado === 'activo').length)
-  const desenlace = !!ritmo.cierrePendiente && !partida.mundo.combate
+  const desenlace = !!ritmo.cierrePendiente && !partida.mundo.combate && !op.convencer
   const extras: string[] = []
   if (partida.mundo.combate) extras.push('COMBATE en curso: los golpes los resuelve el motor. Esta es una acción libre no estándar; narrala y proponé su efecto sin inventar daño.')
   if (desenlace) extras.push(esCapituloFinal(partida) ? INSTRUCCION_DESENLACE_FINAL : INSTRUCCION_DESENLACE)
-  if (extraAdicional) extras.push(extraAdicional)
+  if (op.intencion?.tipo === 'matar' && tirada) extras.push(INSTRUCCION_MATAR(op.intencion.objetivo || 'el objetivo', tirada.exito))
+  if (op.extra) extras.push(op.extra)
   try {
-    const d = await decidirTurno(ctx, partida, pjs, jugadores, { tarea: 'turno', usuario, turnoPj: pj, forzarNarrar: !!tirada || desenlace || !!extraAdicional, extra: extras.join('\n') || undefined })
+    const d = await decidirTurno(ctx, partida, pjs, jugadores, { tarea: 'turno', usuario, turnoPj: pj, forzarNarrar: !!tirada || desenlace || !!op.extra, extra: extras.join('\n') || undefined })
     if (d.tipo === 'tirada') {
-      await pedirTirada(ctx, pid, j, pj, texto, d.preambulo, d.pedido)
+      await pedirTirada(ctx, pid, j, pj, texto, d.preambulo, d.pedido, op.intencion)
+    } else if (op.convencer) {
+      await mostrarConvencimiento(ctx, pid, j, pj, d.salida)
     } else {
-      await cerrarTurnoConNarracion(ctx, pid, j, pj, d.salida, tirada, { msgTirada })
+      await cerrarTurnoConNarracion(ctx, pid, j, pj, d.salida, tirada, { msgTirada: op.msgTirada, intencion: op.intencion, notas: op.notas })
     }
   } catch (e) {
     const p2 = ctx.db.partida(pid)!
@@ -232,7 +268,8 @@ export async function reintentarNarracion(ctx: Ctx, pid: number, turnoN: number)
   const j = jugadores.find((x) => x.id === paso.jugadorId)
   const pj = j ? pjDe(pjs, j) : undefined
   if (!j || !pj) return
-  await narrarAccion(ctx, pid, j, pj, paso.accion, paso.tirada, undefined, paso.msgTirada)
+  const convencer = paso.intencion?.tipo === 'abandonar' && !paso.tirada
+  await narrarAccion(ctx, pid, j, pj, paso.accion, paso.tirada, { msgTirada: paso.msgTirada, intencion: paso.intencion, convencer, extra: convencer ? INSTRUCCION_CONVENCER(pj.ficha.nombre) : undefined })
 }
 
 function resumenTirada(ctx: Ctx, pj: Personaje, t: TiradaResuelta): string {
@@ -242,14 +279,24 @@ function resumenTirada(ctx: Ctx, pj: Personaje, t: TiradaResuelta): string {
 
 // ------------------------------------------------------------------ tiradas
 
-async function pedirTirada(ctx: Ctx, pid: number, j: Jugador, pj: Personaje, accion: string, preambulo: string, pedido: PedidoTirada): Promise<void> {
+async function pedirTirada(ctx: Ctx, pid: number, j: Jugador, pj: Personaje, accion: string, preambulo: string, pedido: PedidoTirada, intencion?: Intencion): Promise<void> {
   const partida = ctx.db.partida(pid)!
   if (!ctx.u.habilidades.some((h) => h.id === pedido.habilidad)) pedido.habilidad = 'supervivencia'
-  partida.paso = { tipo: 'esperando_tirada', accion, jugadorId: j.id, pedido }
+  partida.paso = { tipo: 'esperando_tirada', accion, jugadorId: j.id, pedido, intencion }
   ctx.db.guardarPartida(partida)
   const tn = tnDe(pj, pedido.atributo, pedido.habilidad)
   const texto = tarjetaTiradaTexto(ctx, pj, preambulo, pedido.habilidad, tn, pedido.dificultad, pedido.motivo)
   await aGrupo(ctx, partida, `${texto}\n\n${mencion(j)}, tocá el botón para tirar.`, { teclado: tecladoTiradaBotones(pid, partida.turno_n, pj, partida.mundo.impulso) })
+}
+
+/** Matar nunca es inmediato: el motor arma la tirada con el arma del personaje y decide el azar. */
+async function intentoDeMatar(ctx: Ctx, pid: number, j: Jugador, pj: Personaje, accion: string, intencion: Intencion): Promise<void> {
+  const arma = armaPrincipal(pj, ctx.u)
+  const hab = ctx.u.habilidades.find((h) => h.id === arma.habilidad) ?? ctx.u.habilidades.find((h) => h.id === 'armas_pequenas')!
+  const objetivo = intencion.objetivo || 'su objetivo'
+  const pedido: PedidoTirada = { atributo: hab.attr, habilidad: hab.id, dificultad: 2, motivo: `Matar a ${objetivo}` }
+  const preambulo = `${pj.ficha.nombre} va por ${objetivo}. Un segundo de silencio antes de que todo se decida.`
+  await pedirTirada(ctx, pid, j, pj, accion, preambulo, pedido, intencion)
 }
 
 export async function resolverTirada(ctx: Ctx, pid: number, userId: string, turnoN: number, extraCod: string, mensajeId: number | undefined): Promise<string | void> {
@@ -288,12 +335,12 @@ export async function resolverTirada(ctx: Ctx, pid: number, userId: string, turn
   } else {
     msgTirada = await aGrupo(ctx, partida, resultado)
   }
-  partida.paso = { tipo: 'narrando', accion: paso.accion, jugadorId: j.id, tirada: t, msgTirada }
+  partida.paso = { tipo: 'narrando', accion: paso.accion, jugadorId: j.id, tirada: t, msgTirada, intencion: paso.intencion }
   ctx.db.guardarPartida(partida)
-  await narrarAccion(ctx, pid, j, pj, paso.accion, t, undefined, msgTirada)
+  await narrarAccion(ctx, pid, j, pj, paso.accion, t, { msgTirada, intencion: paso.intencion })
 }
 
-// ------------------------------------------------------------------ muerte fuera de combate
+// ------------------------------------------------------------------ decisiones que se confirman (muerte, abandono)
 
 type Veredicto = { tipo: 'aplicar'; pj: Personaje } | { tipo: 'confirmar'; pj: Personaje } | { tipo: 'rechazar'; nota?: string }
 
@@ -327,49 +374,111 @@ export async function avisarMuerte(ctx: Ctx, partida: Partida, j: Jugador, pj: P
   await aPrivado(ctx, partida, j, `☠️ <b>${esc(pj.ficha.nombre)}</b> murió. Si querés seguir jugando, armá otro personaje: el DJ lo mete en la próxima escena.`, [[{ text: '🧑‍🚀 Crear otro personaje', url: urlUnirse(ctx, partida.id) }]])
 }
 
-export async function confirmarMuerte(ctx: Ctx, pid: number, userId: string, turnoN: number, si: boolean): Promise<string | void> {
+/** El personaje deja el grupo para siempre (no muere): sale de la historia y el jugador puede crear otro. */
+async function retirar(ctx: Ctx, partida: Partida, pj: Personaje): Promise<string> {
+  pj.vivo = false
+  pj.condiciones = ['se fue']
+  ctx.db.guardarPersonaje(pj)
+  registrar(ctx, partida, pj.jugador_id, 'sistema', `${pj.ficha.nombre} dejó el grupo.`, `${pj.ficha.nombre} dejó el grupo para siempre.`)
+  partida.mundo.decisiones = [...(partida.mundo.decisiones ?? []), `${pj.ficha.nombre} abandonó el grupo`].slice(-8)
+  const j = ctx.db.jugador(pj.jugador_id)
+  if (j) await aPrivado(ctx, partida, j, `🚪 <b>${esc(pj.ficha.nombre)}</b> dejó el grupo. Si querés seguir jugando, armá otro personaje: el DJ lo mete en la próxima escena.`, [[{ text: '🧑‍🚀 Crear otro personaje', url: urlUnirse(ctx, partida.id) }]])
+  return `🚪 ${pj.ficha.nombre} deja el grupo`
+}
+
+async function pedirConfirmacion(ctx: Ctx, pid: number, j: Jugador, pj: Personaje, que: 'muerte' | 'abandono', salida?: SalidaNarrar): Promise<void> {
+  const partida = ctx.db.partida(pid)!
+  const accion = partida.paso.tipo === 'narrando' ? partida.paso.accion : ''
+  partida.mundo.confirmacion = { que, pjId: pj.id, jugadorId: j.id, accion, salida }
+  partida.paso = { tipo: 'confirmando', jugadorId: j.id, que }
+  ctx.db.guardarPartida(partida)
+  if (que === 'muerte') {
+    await aGrupo(ctx, partida, `☠️ ${mencion(j)}, <b>esto mata a ${esc(pj.ficha.nombre)} de verdad</b>. No hay vuelta atrás. ¿Confirmás?`, { teclado: tecladoMuerte(pid, partida.turno_n, pj.ficha.nombre) })
+  } else {
+    await aGrupo(ctx, partida, `🚪 ${mencion(j)}, ¿<b>${esc(pj.ficha.nombre)}</b> se va igual?`, { teclado: tecladoAbandono(pid, partida.turno_n) })
+  }
+}
+
+/** El DJ intentó convencer al que se quiere ir: se muestra y el jugador decide con botones. */
+async function mostrarConvencimiento(ctx: Ctx, pid: number, j: Jugador, pj: Personaje, salida: SalidaNarrar): Promise<void> {
+  const partida = ctx.db.partida(pid)!
+  registrar(ctx, partida, j.id, 'narracion', salida.narracion, salida.cronica || `Intentan convencer a ${pj.ficha.nombre} de quedarse.`)
+  await aGrupo(ctx, partida, `🎲 <i>${esc(salida.narracion)}</i>`)
+  await pedirConfirmacion(ctx, pid, j, pj, 'abandono')
+}
+
+/** Botones de confirmación (muerte o abandono). */
+export async function confirmarDecision(ctx: Ctx, pid: number, userId: string, turnoN: number, si: boolean): Promise<string | void> {
   const { partida, jugadores, pjs } = cargar(ctx, pid)
-  const pend = partida.mundo.muertePendiente
-  if (!pend || partida.paso.tipo !== 'confirmando_muerte' || partida.turno_n !== turnoN) return 'Esa decisión ya no está pendiente.'
+  const pend = partida.mundo.confirmacion
+  if (!pend || partida.paso.tipo !== 'confirmando' || partida.turno_n !== turnoN) return 'Esa decisión ya no está pendiente.'
   const j = jugadores.find((x) => x.id === pend.jugadorId)
   if (!j || j.user_id !== userId) return 'Esa decisión es de otra persona.'
   const pj = pjs.find((x) => x.id === pend.pjId)
   if (!pj) return
-  partida.mundo.muertePendiente = null
+  partida.mundo.confirmacion = null
   partida.paso = { tipo: 'narrando', accion: pend.accion, jugadorId: j.id }
   ctx.db.guardarPartida(partida)
-  if (si) {
-    await cerrarTurnoConNarracion(ctx, pid, j, pj, pend.salida as SalidaNarrar, undefined, { muerteConfirmada: true })
-  } else {
-    await aGrupo(ctx, partida, `↩️ <b>${esc(pj.ficha.nombre)}</b> se arrepiente en el último segundo.`)
-    await narrarAccion(ctx, pid, j, pj, pend.accion, undefined, 'El jugador se arrepintió en el último momento: su personaje NO muere. Narrá cómo se frena o lo frenan, sin muerte, y seguí la escena.')
+  const nombre = pj.ficha.nombre
+  if (pend.que === 'muerte' && pend.salida) {
+    // Muerte que propuso el DJ en su narración: se muestra tal cual si confirma.
+    if (si) return cerrarTurnoConNarracion(ctx, pid, j, pj, pend.salida as SalidaNarrar, undefined, { muerteConfirmada: true })
+    return narrarAccion(ctx, pid, j, pj, pend.accion, undefined, { extra: INSTRUCCION_MUERTE_ARREPENTIDA(nombre) })
   }
+  if (pend.que === 'muerte') {
+    if (!si) return narrarAccion(ctx, pid, j, pj, pend.accion, undefined, { extra: INSTRUCCION_MUERTE_ARREPENTIDA(nombre) })
+    const nota = await morir(ctx, partida, pj, 'decisión propia')
+    ctx.db.guardarPartida(partida)
+    return narrarAccion(ctx, pid, j, pj, pend.accion, undefined, { extra: INSTRUCCION_MUERTE_CONFIRMADA(nombre), notas: [nota] })
+  }
+  // Abandono
+  if (!si) return narrarAccion(ctx, pid, j, pj, pend.accion, undefined, { extra: INSTRUCCION_SE_QUEDA(nombre) })
+  const nota = await retirar(ctx, partida, pj)
+  ctx.db.guardarPartida(partida)
+  ajustarRitmo(ctx, pid)
+  return narrarAccion(ctx, pid, j, pj, pend.accion, undefined, { extra: INSTRUCCION_SE_VA(nombre), notas: [nota] })
 }
 
 // ------------------------------------------------------------------ cierre de turno
 
 export async function cerrarTurnoConNarracion(
   ctx: Ctx, pid: number, j: Jugador, pj: Personaje, salida: SalidaNarrar, tirada?: TiradaResuelta,
-  op: { muerteConfirmada?: boolean; msgTirada?: number } = {},
+  op: { muerteConfirmada?: boolean; msgTirada?: number; intencion?: Intencion; notas?: string[] } = {},
 ): Promise<void> {
   const { partida, pjs, jugadores } = cargar(ctx, pid)
   const enCombate = !!partida.mundo.combate
 
-  // Muerte elegida: antes de mostrar nada, el jugador confirma.
+  // Muerte elegida que propuso el DJ: antes de mostrar nada, el jugador confirma.
   const veredicto = evaluarMuerte(partida, pjs, pj, salida, tirada, !!op.muerteConfirmada)
   if (veredicto.tipo === 'confirmar') {
-    partida.mundo.muertePendiente = { pjId: veredicto.pj.id, jugadorId: j.id, salida, accion: partida.paso.tipo === 'narrando' ? partida.paso.accion : '' }
-    partida.paso = { tipo: 'confirmando_muerte', jugadorId: j.id }
-    ctx.db.guardarPartida(partida)
-    await aGrupo(ctx, partida, `☠️ ${mencion(j)}, <b>esto mata a ${esc(veredicto.pj.ficha.nombre)} de verdad</b>. No hay vuelta atrás. ¿Seguro?`, { teclado: tecladoMuerte(pid, partida.turno_n, veredicto.pj.ficha.nombre) })
+    await pedirConfirmacion(ctx, pid, j, veredicto.pj, 'muerte', salida)
     return
+  }
+
+  // Intento de matar: el azar manda. Si la tirada falló, nadie muere; si salió, el objetivo muere aunque la IA no lo marque.
+  const notasMatar: string[] = []
+  if (op.intencion?.tipo === 'matar' && tirada) {
+    const obj = op.intencion.objetivo ?? ''
+    if (!tirada.exito) {
+      if (salida.cambios?.npcs) salida.cambios.npcs = salida.cambios.npcs.map((n) => (n.estado === 'muerto' ? { ...n, estado: 'herido' as const } : n))
+      if (salida.cambios?.muerte) delete salida.cambios.muerte
+    } else if (obj) {
+      const npc = partida.mundo.npcs.find((n) => n.nombre.toLowerCase() === obj.toLowerCase() || n.id === obj.toLowerCase())
+      const otroPj = buscarPj(pjs.filter((x) => x.id !== pj.id), obj)
+      if (otroPj && partida.config.pvp && partida.config.letalidad !== 'suave' && otroPj.vivo) notasMatar.push(await morir(ctx, partida, otroPj, `a manos de ${pj.ficha.nombre}`))
+      else if (npc && !esNpcMuerto(partida.mundo, npc.nombre)) {
+        const r = { aplicados: [] as string[] }
+        marcarNpcMuerto(partida.mundo, npc.nombre, r)
+        notasMatar.push(...r.aplicados)
+      }
+    }
   }
 
   const ritmo = ritmoDe(partida, jugadores.filter((x) => x.estado === 'activo').length)
   const eraDesenlace = !!ritmo.cierrePendiente && !enCombate
 
   const res = aplicarCambios(ctx.u, partida.mundo, pjs, salida.cambios, { enCombate })
-  const notas = [...res.aplicados]
+  const notas = [...(op.notas ?? []), ...notasMatar, ...res.aplicados]
   if (veredicto.tipo === 'aplicar') notas.push(await morir(ctx, partida, veredicto.pj, salida.cambios?.muerte?.motivo ?? ''))
   else if (veredicto.nota) notas.push(veredicto.nota)
   if (res.caidos.length) notas.push(...res.caidos.map((n) => `🩸 ${n} queda CAÍDO`))
@@ -397,10 +506,18 @@ export async function cerrarTurnoConNarracion(
   ctx.db.guardarJugador(j)
 
   // Evento obligatorio: si la narración cambió algo, ocurrió; si no, queda pendiente.
-  const cambioAlgo = res.aplicados.length > 0 || !!salida.combate || veredicto.tipo === 'aplicar'
+  const cambioAlgo = res.aplicados.length > 0 || notasMatar.length > 0 || !!salida.combate || veredicto.tipo === 'aplicar'
   if (ritmo.eventoPendiente && cambioAlgo) {
     ritmo.eventoPendiente = undefined
     ritmo.proximoEvento = ritmo.turnos + 1 + intervaloEvento(ritmo.objetivo)
+  }
+  // Traición: queda como hecho y la consecuencia llega en la escena siguiente.
+  if (op.intencion?.tipo === 'traicion') {
+    const obj = op.intencion.objetivo ?? ''
+    partida.mundo.decisiones = [...(partida.mundo.decisiones ?? []), `${pj.ficha.nombre} traicionó al grupo${obj ? ` y se pasó a ${obj}` : ''}`].slice(-8)
+    ritmo.eventoPendiente = INSTRUCCION_TRAICION(pj.ficha.nombre, obj)
+    ritmo.proximoEvento = ritmo.turnos + 1 + intervaloEvento(ritmo.objetivo)
+    notas.push(`🗡️ ${pj.ficha.nombre} traicionó al grupo`)
   }
   registrarTurno(ritmo)
   if (!ritmo.eventoPendiente && !ritmo.cierrePendiente && ritmo.turnos >= ritmo.proximoEvento) {

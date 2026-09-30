@@ -62,3 +62,27 @@ export function textoViolencia(v: 'implicita' | 'explicita' | undefined): string
     ? 'Violencia: EXPLÍCITA. Las heridas, las muertes y la crudeza del Yermo se describen sin suavizar (salvo lo marcado en líneas y velos).'
     : 'Violencia: IMPLÍCITA. Las muertes y las heridas ocurren y tienen consecuencias, pero se cuentan con cortes de escena y sin detalle gráfico.'
 }
+
+export const PROMPT_INTENCION = `Clasificás la acción de un jugador de rol. Devolvé SOLO JSON: {"intencion": "muerte_propia" | "matar" | "abandonar" | "traicion" | "otra", "objetivo": "nombre de a quién o a qué apunta, o vacío"}.
+- muerte_propia: el personaje decide morir o quitarse la vida (tirarse al vacío, dispararse, sacrificarse sabiendo que muere).
+- matar: intenta matar o ejecutar a alguien concreto (un NPC o un personaje). Pelear en general o atacar monstruos NO es matar.
+- abandonar: ESE personaje deja al grupo o la historia para siempre (se va solo, se separa definitivamente). Si todo el grupo cambia de rumbo, es "otra".
+- traicion: se pasa al bando enemigo, delata al grupo o le cuenta sus secretos a una facción rival.
+- otra: cualquier otra cosa, incluidas bromas, amenazas sin intención real o hipótesis.
+El objetivo es el nombre tal como lo dice el jugador (para traición, la facción o persona a la que se pasa).`
+
+export const INSTRUCCION_MUERTE_CONFIRMADA = (nombre: string) => `FINAL DE ${nombre.toUpperCase()}: su jugador eligió que el personaje muera y lo confirmó; el motor ya lo aplicó. Narrá su final con respeto y elipsis (la decisión, el momento, la reacción de los demás), sin detallar el método. No es una escena para impedir: ya ocurrió. No uses "cambios.muerte".`
+
+export const INSTRUCCION_MUERTE_ARREPENTIDA = (nombre: string) => `${nombre} estuvo a punto de terminar con todo y a último momento se frenó por decisión de su jugador. Narrá ese instante con peso y seguí la escena. No muere.`
+
+export const INSTRUCCION_CONVENCER = (nombre: string) => `${nombre.toUpperCase()} QUIERE IRSE DEL GRUPO. Narrá un intento concreto y emotivo de convencerlo de quedarse (un compañero, un NPC, una razón que le importe por su gancho). NO lo impidas y NO narres su decisión final: terminá dejando la decisión en sus manos. No uses cambios.`
+
+export const INSTRUCCION_SE_VA = (nombre: string) => `${nombre} DECIDIÓ IRSE Y SE VA: narrá su partida, definitiva, con peso (qué se lleva, qué deja, cómo lo ven irse). El motor ya lo sacó de la historia. No lo hagas volver.`
+
+export const INSTRUCCION_SE_QUEDA = (nombre: string) => `${nombre} estaba por irse y a último momento cambia de opinión y se queda: narrá ese cambio y seguí la escena.`
+
+export const INSTRUCCION_MATAR = (objetivo: string, exito: boolean) => exito
+  ? `INTENTO DE MATAR A ${objetivo.toUpperCase()}: la tirada SALIÓ. ${objetivo} muere: narralo y marcalo con estado "muerto" en "cambios.npcs" (si es un NPC).`
+  : `INTENTO DE MATAR A ${objetivo.toUpperCase()}: la tirada FALLÓ. ${objetivo} sobrevive y reacciona (esquiva, huye, se defiende o contraataca). No muere en este turno.`
+
+export const INSTRUCCION_TRAICION = (nombre: string, objetivo: string) => `CONSECUENCIA DE LA TRAICIÓN: ${nombre} se pasó${objetivo ? ` a ${objetivo}` : ' al enemigo'} y habló. Lo que contó ya tiene efecto: el bando que lo recibió actúa con esa información (una emboscada preparada, un rehén, un chantaje, una persecución o un trato con precio). Mostralo concreto y con consecuencias para el grupo.`

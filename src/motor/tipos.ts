@@ -131,11 +131,15 @@ export interface Partida {
 export type Paso =
   | { tipo: 'libre' }
   | { tipo: 'esperando_accion' }
-  | { tipo: 'narrando'; accion: string; jugadorId: number; tirada?: TiradaResuelta; msgTirada?: number }
-  | { tipo: 'esperando_tirada'; accion: string; jugadorId: number; pedido: PedidoTirada }
+  | { tipo: 'narrando'; accion: string; jugadorId: number; tirada?: TiradaResuelta; msgTirada?: number; intencion?: Intencion }
+  | { tipo: 'esperando_tirada'; accion: string; jugadorId: number; pedido: PedidoTirada; intencion?: Intencion }
   | { tipo: 'esperando_libre'; jugadorId: number }
   | { tipo: 'esperando_mejora' }
-  | { tipo: 'confirmando_muerte'; jugadorId: number }
+  | { tipo: 'confirmando'; jugadorId: number; que: 'muerte' | 'abandono' }
+
+/** Qué quiere hacer el jugador cuando la acción es drástica (lo decide un clasificador barato). */
+export type TipoIntencion = 'muerte_propia' | 'matar' | 'abandonar' | 'traicion' | 'otra'
+export interface Intencion { tipo: TipoIntencion; objetivo?: string }
 
 export interface Jugador {
   id: number
@@ -201,8 +205,8 @@ export interface Mundo {
   /** Ideas del DJ para el próximo turno (se muestran a pedido). */
   ideas?: string[]
   votacion?: VotacionGrupo | null
-  /** Muerte elegida esperando confirmación del jugador. */
-  muertePendiente?: MuertePendiente | null
+  /** Decisión drástica esperando que el jugador confirme con botones. */
+  confirmacion?: Confirmacion | null
 }
 
 /** Director de ritmo: lo lleva el motor, no la IA. */
@@ -236,11 +240,13 @@ export interface VotacionGrupo {
   autor: string
 }
 
-export interface MuertePendiente {
+export interface Confirmacion {
+  que: 'muerte' | 'abandono'
   pjId: number
   jugadorId: number
-  salida: unknown
   accion: string
+  /** Muerte propuesta por el DJ en su narración (se muestra solo si confirma). */
+  salida?: unknown
 }
 
 export interface GuionMaestro {

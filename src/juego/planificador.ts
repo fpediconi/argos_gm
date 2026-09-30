@@ -19,7 +19,7 @@ export async function tick(ctx: Ctx): Promise<void> {
     await ctx.colas.correr(`p${p.id}`, async () => {
       const partida = ctx.db.partida(p.id)!
       if (partida.estado !== 'EN_JUEGO' || !partida.turno_jugador_id) return
-      if (partida.paso.tipo === 'narrando' || partida.paso.tipo === 'confirmando_muerte') return
+      if (partida.paso.tipo === 'narrando' || partida.paso.tipo === 'confirmando') return
       const j = ctx.db.jugador(partida.turno_jugador_id)
       if (!j) return
 
