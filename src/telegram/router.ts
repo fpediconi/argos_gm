@@ -253,15 +253,27 @@ async function botonInfo(ctx: Ctx, pid: number, userId: string, que: string): Pr
   const j = p && ctx.db.jugadorDeUsuario(pid, userId)
   if (!p || !j) return 'No estás en esta partida.'
   const usuario = ctx.db.usuario(userId)
-  const chat = usuario?.dm_chat_id ?? j.dm_chat_id ?? p.chat_id
+  const dm = usuario?.dm_chat_id ?? j.dm_chat_id ?? null
+  let enPrivado = !!dm
   const resp = async (html: string) => {
-    await ctx.api.enviar(chat, html, { threadId: chat === p.chat_id ? p.thread_id : undefined })
+    if (dm) {
+      try {
+        await ctx.api.enviar(dm, html)
+        return
+      } catch (e) {
+        ctx.log('no pude escribir por privado, uso el grupo:', (e as Error).message)
+        enPrivado = false
+      }
+    }
+    await ctx.api.enviar(p.chat_id, html, { threadId: p.thread_id })
   }
-  if (chat === p.chat_id) await resp('💡 Tip: escribime por privado (/start) y estas consultas te llegan ahí sin llenar el grupo.')
+  if (!dm) await ctx.api.enviar(p.chat_id, '💡 Tip: escribime por privado (/start) y estas consultas te llegan ahí sin llenar el grupo.', { threadId: p.thread_id })
   switch (que) {
-    case 'ficha': { const pj = ctx.db.ultimoPersonajeDe(j.id); return void (await resp(pj ? fichaTexto(ctx, pj) : 'Sin personaje.')) }
-    case 'inv': { const pj = ctx.db.personajeVivoDe(j.id); return void (await resp(pj ? inventarioTexto(ctx, pj) : 'Sin personaje.')) }
-    case 'donde': return info.cmdDonde(ctx, p, j, resp)
-    case 'resumen': return info.cmdResumen(ctx, p, j, resp)
+    case 'ficha': { const pj = ctx.db.ultimoPersonajeDe(j.id); await resp(pj ? fichaTexto(ctx, pj) : 'Sin personaje.'); break }
+    case 'inv': { const pj = ctx.db.personajeVivoDe(j.id); await resp(pj ? inventarioTexto(ctx, pj) : 'Sin personaje.'); break }
+    case 'donde': await info.cmdDonde(ctx, p, j, resp); break
+    case 'resumen': await info.cmdResumen(ctx, p, j, resp); break
+    default: return
   }
+  return enPrivado ? '📩 Te lo mandé por privado (chat con el bot).' : undefined
 }
