@@ -22,6 +22,7 @@ export interface Config {
   modelos: { narrador: string; util: string; guionista: string }
   precios: { narrador: Precio; util: Precio; guionista: Precio }
   reasoningEffort: string
+  reasoningEffortTools: string
   maxSalidaNarrador: number
   presupuestoPartidaUsd: number
   presupuestoGlobalUsd: number
@@ -49,6 +50,7 @@ export function cargarConfig(): Config {
       guionista: { in: num('PRECIO_GUIONISTA_IN', 0.75), cache: num('PRECIO_GUIONISTA_CACHE', 0.075), out: num('PRECIO_GUIONISTA_OUT', 4.5) },
     },
     reasoningEffort: env('OPENAI_REASONING_EFFORT', 'low'),
+    reasoningEffortTools: env('OPENAI_REASONING_EFFORT_TOOLS', 'none'),
     maxSalidaNarrador: num('MAX_SALIDA_NARRADOR', 1500),
     presupuestoPartidaUsd: num('PRESUPUESTO_PARTIDA_USD', 0.5),
     presupuestoGlobalUsd: num('PRESUPUESTO_GLOBAL_USD', 2),

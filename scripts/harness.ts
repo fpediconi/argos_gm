@@ -14,7 +14,7 @@ export const GRUPO = '-100500'
 export const HORA = 60 * 60 * 1000
 
 export const cfgPrueba: Config = {
-  telegramToken: 'x', adminId: '101', openaiKey: 'x', openaiBase: 'http://localhost', reasoningEffort: '',
+  telegramToken: 'x', adminId: '101', openaiKey: 'x', openaiBase: 'http://localhost', reasoningEffort: '', reasoningEffortTools: '',
   modelos: { narrador: 'm', util: 'm', guionista: 'm' },
   precios: { narrador: { in: 1, cache: 0.1, out: 4 }, util: { in: 0.2, cache: 0.02, out: 1 }, guionista: { in: 1, cache: 0.1, out: 4 } },
   maxSalidaNarrador: 800, presupuestoPartidaUsd: 0.5, presupuestoGlobalUsd: 2, dbPath: ':memory:', tzMin: -180, puerto: 0, fusibleOff: false,

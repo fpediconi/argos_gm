@@ -65,7 +65,9 @@ export class CerebroOpenAI implements Cerebro {
   private async llamar(rol: RolIA, partidaId: number | null, cuerpo: Record<string, unknown>): Promise<any> {
     const modelo = this.cfg.modelos[rol]
     const body: Record<string, unknown> = { model: modelo, ...cuerpo }
-    if (this.cfg.reasoningEffort && /^(gpt-5|o\d)/.test(modelo)) body.reasoning_effort = this.cfg.reasoningEffort
+    // Algunos modelos (gpt-5.x) no aceptan herramientas junto con razonamiento en /chat/completions: para esas llamadas se usa otro nivel (por defecto 'none').
+    const esfuerzo = body.tools ? this.cfg.reasoningEffortTools : this.cfg.reasoningEffort
+    if (esfuerzo && /^(gpt-5|o\d)/.test(modelo)) body.reasoning_effort = esfuerzo
     let ultimoError: unknown
     for (let intento = 0; intento < 3; intento++) {
       const t0 = Date.now()
