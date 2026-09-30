@@ -1,6 +1,7 @@
 import type { Config } from './config.js'
 import type { Repos } from './db/repos.js'
 import type { Cerebro } from './dj/cerebro.js'
+import type { Oido } from './dj/oido.js'
 import type { ApiTelegram } from './telegram/api.js'
 import type { Rng } from './motor/dados.js'
 import type { Universo } from './motor/tipos.js'
@@ -14,6 +15,8 @@ export interface Ctx {
   db: Repos
   api: ApiTelegram
   cerebro: Cerebro
+  /** Transcripción de audios (opcional: sin ella, los audios se rechazan con aviso). */
+  oido?: Oido
   reloj: Reloj
   rng: Rng
   u: Universo

@@ -4,7 +4,8 @@ import type { Decision, RolIA } from './cerebro.js'
 import { parsearGuion } from './cerebro.js'
 import { sistemaTurno, fichaCompacta } from './contexto.js'
 import { estadoPresupuesto } from './presupuesto.js'
-import { PROMPT_EPILOGO, PROMPT_GUIONISTA, PROMPT_RADIO, PROMPT_REACCION, PROMPT_RESUMEN, PROMPT_RONDA, PROMPT_TRASFONDO } from './prompts.js'
+import { PROMPT_EPILOGO, PROMPT_GUIONISTA, PROMPT_PREMISAS, PROMPT_RADIO, PROMPT_REACCION, PROMPT_RESUMEN, PROMPT_RONDA, PROMPT_TRASFONDO } from './prompts.js'
+import { DURACIONES } from '../motor/ritmo.js'
 import { recortar } from '../util.js'
 
 export class ErrorPresupuesto extends Error {
@@ -42,11 +43,13 @@ export async function crearMundo(ctx: Ctx, partida: Partida, pjs: Personaje[]): 
   const cfg = partida.config
   const esc = ctx.u.escenarios.find((e) => e.id === cfg.escenario)
   const tono = ctx.u.tonos.find((t) => t.id === cfg.tono)
-  const duracion = { oneshot: 'una aventura corta de un solo capítulo', mini: 'una mini-campaña de 4 capítulos', abierta: 'una campaña abierta' }[cfg.duracion]
+  const d = DURACIONES[cfg.duracion] ?? DURACIONES.oneshot
+  const duracion = d.capitulos === 1 ? `una aventura de un solo capítulo (${d.nombre})` : d.capitulos > 1 ? `una mini-campaña de ${d.capitulos} capítulos` : 'una campaña abierta por capítulos'
   const usuario = [
     `Universo: ${ctx.u.nombre}. ${ctx.u.estilo.trim()}`,
     `Escenario: ${esc?.nombre}. ${esc?.semilla}`,
     `Tono: ${tono?.prompt}. Duración: ${duracion}. Evitar: ${cfg.evitar.join(', ') || 'nada en particular'}.`,
+    cfg.premisa ? `PREMISA ELEGIDA POR EL GRUPO (obligatoria, el guion gira alrededor de ella): ${cfg.premisa}` : 'Premisa: inventala vos, con un objetivo concreto.',
     `Bestiario disponible (ids): ${ctx.u.bestiario.map((b) => b.id).join(', ')}.`,
     `Personajes (integrá sus ganchos):\n${pjs.map((p) => fichaCompacta(ctx, p)).join('\n')}`,
   ].join('\n')
@@ -64,21 +67,39 @@ export async function crearMundo(ctx: Ctx, partida: Partida, pjs: Personaje[]): 
   )
 }
 
-export async function generarTrasfondo(ctx: Ctx, partidaId: number | null, f: Ficha): Promise<{ trasfondo: string; gancho: string }> {
+/** Tres premisas de una línea para que el anfitrión elija antes de arrancar. Modelo barato. */
+export async function generarPremisas(ctx: Ctx, partida: Partida): Promise<string[]> {
+  const cfg = partida.config
+  const esc = ctx.u.escenarios.find((e) => e.id === cfg.escenario)
+  const tono = ctx.u.tonos.find((t) => t.id === cfg.tono)
+  const usuario = `Universo: ${ctx.u.nombre}. Escenario: ${esc?.nombre}. ${esc?.semilla}\nTono: ${tono?.prompt}.`
+  try {
+    const txt = await ctx.cerebro.texto({ tarea: 'premisas', rol: 'util', partidaId: partida.id, sistema: PROMPT_PREMISAS, usuario, maxSalida: 500, json: true })
+    const j = JSON.parse(txt.replace(/^```(?:json)?\s*|\s*```$/g, ''))
+    return (Array.isArray(j.premisas) ? j.premisas : []).map((x: unknown) => recortar(String(x), 140)).filter(Boolean).slice(0, 3)
+  } catch {
+    return []
+  }
+}
+
+export async function generarTrasfondo(ctx: Ctx, partidaId: number | null, f: Ficha): Promise<{ trasfondo: string; gancho: string; bio: string }> {
   const o = ctx.u.origenes.find((x) => x.id === f.origen)
   const usuario = `Personaje: ${f.nombre}, ${o?.nombre}. Aspecto: ${f.aspecto}. Frase: "${f.frase}".\nRespuestas del jugador:\n1) ¿Qué te sacó de casa? ${f.respuestas[0] ?? ''}\n2) ¿Qué no querés que nadie sepa? ${f.respuestas[1] ?? ''}\n3) ¿A quién o qué protegerías? ${f.respuestas[2] ?? ''}`
   try {
     const txt = await ctx.cerebro.texto({ tarea: 'trasfondo', rol: 'util', partidaId, sistema: PROMPT_TRASFONDO, usuario, maxSalida: 700, json: true })
     const j = JSON.parse(txt.replace(/^```(?:json)?\s*|\s*```$/g, ''))
-    return { trasfondo: recortar(String(j.trasfondo ?? ''), 400), gancho: recortar(String(j.gancho ?? ''), 200) }
+    return { trasfondo: recortar(String(j.trasfondo ?? ''), 400), gancho: recortar(String(j.gancho ?? ''), 200), bio: recortar(String(j.bio_publica ?? ''), 260) }
   } catch {
-    return { trasfondo: recortar(f.respuestas[0] ?? '', 300), gancho: recortar(f.respuestas[1] ?? '', 200) }
+    // Sin IA: la bio pública nunca usa la respuesta secreta (respuestas[1]).
+    return { trasfondo: recortar(f.respuestas[0] ?? '', 300), gancho: recortar(f.respuestas[1] ?? '', 200), bio: recortar(f.respuestas[0] ?? '', 200) }
   }
 }
 
 export async function reaccionar(ctx: Ctx, pregunta: string, respuesta: string): Promise<string> {
   try {
-    return recortar(await ctx.cerebro.texto({ tarea: 'reaccion', rol: 'util', partidaId: null, sistema: PROMPT_REACCION, usuario: `Pregunta: ${pregunta}\nRespuesta del jugador: ${respuesta}`, maxSalida: 200 }), 200)
+    const r = recortar(await ctx.cerebro.texto({ tarea: 'reaccion', rol: 'util', partidaId: null, sistema: PROMPT_REACCION, usuario: `Pregunta: ${pregunta}\nRespuesta del jugador: ${respuesta}`, maxSalida: 200 }), 200)
+    // Red de seguridad: el narrador comenta, no pregunta (una repregunta confunde el flujo de preguntas fijas).
+    return /[?¿]/.test(r) ? '' : r
   } catch {
     return ''
   }
@@ -88,7 +109,8 @@ export async function reaccionar(ctx: Ctx, pregunta: string, respuesta: string):
 export async function recomprimirResumen(ctx: Ctx, partida: Partida): Promise<void> {
   const nuevas = ctx.db.bitacoraDesde(partida.id, partida.resumen_hasta).filter((b) => b.cronica)
   if (nuevas.length === 0) return
-  const usuario = `Resumen anterior:\n${partida.resumen || '(ninguno)'}\n\nCrónicas nuevas:\n${nuevas.map((b) => `- ${b.cronica}`).join('\n')}`
+  const principal = partida.mundo.misiones.find((m) => m.principal)
+  const usuario = `Objetivo principal: ${principal ? `${principal.texto} (${principal.estado})` : '(sin definir)'}\n\nResumen anterior:\n${partida.resumen || '(ninguno)'}\n\nCrónicas nuevas:\n${nuevas.map((b) => `- ${b.cronica}`).join('\n')}`
   try {
     const r = await ctx.cerebro.texto({ tarea: 'resumen', rol: 'util', partidaId: partida.id, sistema: PROMPT_RESUMEN, usuario, maxSalida: 900 })
     if (r) {

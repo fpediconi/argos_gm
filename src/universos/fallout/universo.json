@@ -153,7 +153,10 @@
     { "id": "robot_asaltante", "nombre": "Robot asaltante", "salud": 14, "tn": 11, "danio": 4, "prot": 2, "rasgo": "Vulnerable a Ciencias" },
     { "id": "lobo_marino", "nombre": "Lobo marino mutante", "salud": 12, "tn": 10, "danio": 4, "prot": 1, "rasgo": "Anfibio" },
     { "id": "mutante_bruto", "nombre": "Mutante bruto", "salud": 18, "tn": 10, "danio": 5, "prot": 1, "rasgo": "Pega fuerte" },
-    { "id": "perro_salvaje", "nombre": "Perro salvaje", "salud": 5, "tn": 9, "danio": 2, "prot": 0, "rasgo": "Rápido" }
+    { "id": "perro_salvaje", "nombre": "Perro salvaje", "salud": 5, "tn": 9, "danio": 2, "prot": 0, "rasgo": "Rápido" },
+    { "id": "civil", "nombre": "Civil", "salud": 5, "tn": 7, "danio": 2, "prot": 0, "rasgo": "Para NPC comunes que se defienden (usá su nombre)" },
+    { "id": "guardia", "nombre": "Guardia", "salud": 9, "tn": 10, "danio": 4, "prot": 1, "rasgo": "Para NPC armados: guardias, matones, escoltas" },
+    { "id": "jefe", "nombre": "Jefe", "salud": 14, "tn": 11, "danio": 5, "prot": 2, "rasgo": "Para líderes de facción o villanos con nombre" }
   ],
   "escenarios": [
     { "id": "yermo", "nombre": "Yermo clásico", "emoji": "🏜️", "semilla": "Yermo postnuclear genérico: ruinas de ciudades, refugios sellados, caravanas, saqueadores, facciones en tensión y tecnología antigua." },

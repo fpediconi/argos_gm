@@ -5,6 +5,7 @@ import { Repos } from './db/repos.js'
 import { cargarUniverso } from './universos/fallout/index.js'
 import { TelegramReal } from './telegram/api.js'
 import { CerebroOpenAI, costo } from './dj/cerebro.js'
+import { OidoOpenAI } from './dj/oido.js'
 import { herramientasDe } from './dj/herramientas.js'
 import { rngReal } from './motor/dados.js'
 import { Colas } from './util.js'
@@ -32,7 +33,7 @@ async function main() {
   await api.setComandos(COMANDOS).catch((e) => console.warn('setComandos:', e))
 
   const ctx: Ctx = {
-    cfg, db, api, cerebro, reloj, rng: rngReal, u, colas: new Colas(),
+    cfg, db, api, cerebro, oido: cfg.openaiKey ? new OidoOpenAI(cfg, db, reloj.ahora) : undefined, reloj, rng: rngReal, u, colas: new Colas(),
     botUsername: yo.username ?? '', botId: yo.id,
     log: (...a) => console.log(new Date().toISOString(), ...a),
   }

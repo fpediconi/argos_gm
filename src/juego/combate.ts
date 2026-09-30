@@ -8,7 +8,8 @@ import { esc } from '../util.js'
 import { tecladoAliadosCaidos, tecladoCombate, tecladoObjetivos } from '../telegram/teclados.js'
 import type { Teclado } from '../telegram/api.js'
 import { aGrupo, cargar, pjDe, refrescarTablero, registrar } from './comun.js'
-import { avanzarTurno, iniciarTurno } from './turno.js'
+import { avanzarTurno, avisarMuerte, iniciarTurno } from './turno.js'
+import { marcarNpcMuerto } from '../motor/estado.js'
 
 function consumiblesDe(ctx: Ctx, pj: Personaje) {
   const robot = ctx.u.origenes.find((o) => o.id === pj.ficha.origen)?.robot
@@ -105,11 +106,20 @@ async function cerrarCombate(ctx: Ctx, pid: number, resultado: 'victoria' | 'der
     pid,
     resultado === 'victoria'
       ? 'Todos los enemigos fueron derrotados: el combate terminó con victoria. Cerrá la escena.'
-      : 'Todos los personajes cayeron: los enemigos ganaron. Narrá con qué consecuencia sobreviven (capturados, dejados por muertos, rescatados); nadie muere en este momento.',
+      : partida.config.letalidad === 'hardcore'
+        ? 'Todos los personajes cayeron: los enemigos ganaron. En esta mesa caer es morir: narrá el final de los caídos.'
+        : 'Todos los personajes cayeron: los enemigos ganaron. Narrá la escena; el motor decide después quién sobrevive según la Suerte de cada uno.',
   )
   const lineas = resolverCaidos(pjs, partida.config.letalidad, ctx.rng)
   for (const p of pjs) ctx.db.guardarPersonaje(p)
   const p2 = ctx.db.partida(pid)!
+  // Los NPC con nombre que cayeron en combate quedan muertos en la historia.
+  for (const e of c.enemigos) if (e.npc && e.salud <= 0) marcarNpcMuerto(p2.mundo, e.nombre)
+  for (const p of pjs) if (!p.vivo) {
+    registrar(ctx, p2, p.jugador_id, 'sistema', `${p.ficha.nombre} murió en combate.`, `${p.ficha.nombre} murió en combate.`)
+    const j = ctx.db.jugador(p.jugador_id)
+    if (j) await avisarMuerte(ctx, p2, j, p)
+  }
   p2.mundo.combate = null
   p2.modo_escena = 'exploracion'
   p2.paso = { tipo: 'libre' }

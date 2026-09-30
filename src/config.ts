@@ -30,6 +30,10 @@ export interface Config {
   tzMin: number
   puerto: number
   fusibleOff: boolean
+  modeloTranscripcion: string
+  /** USD por minuto de audio (referencia: verificar el precio vigente del modelo elegido). */
+  precioTranscripcionMin: number
+  maxAudioSeg: number
 }
 
 export function cargarConfig(): Config {
@@ -58,5 +62,8 @@ export function cargarConfig(): Config {
     tzMin: num('TZ_OFFSET_MIN', -180),
     puerto: num('PUERTO', 3100),
     fusibleOff: env('FUSIBLE_OFF') === 'true',
+    modeloTranscripcion: env('MODELO_TRANSCRIPCION', 'whisper-1'),
+    precioTranscripcionMin: num('PRECIO_TRANSCRIPCION_MIN', 0.006),
+    maxAudioSeg: num('MAX_AUDIO_SEG', 90),
   }
 }

@@ -6,7 +6,13 @@ import { esCaido, saludMaxEfectiva, quitarItem, tieneItem } from './personaje.js
 
 export const MAX_ENEMIGOS = 6
 
-export interface PedidoEnemigos { plantilla_id: string; cantidad?: number; elite?: boolean }
+export interface PedidoEnemigos {
+  plantilla_id: string; cantidad?: number; elite?: boolean
+  /** Nombre propio (un NPC de la historia que pelea). Implica cantidad 1. */
+  nombre?: string
+  /** id del NPC en mundo.npcs: si muere en combate queda muerto en la historia. */
+  npc_id?: string
+}
 
 export function crearCombate(u: Universo, pedidos: PedidoEnemigos[], sorpresa: Combate['sorpresa']): Combate | null {
   const enemigos: EnemigoEnCombate[] = []
@@ -14,7 +20,8 @@ export function crearCombate(u: Universo, pedidos: PedidoEnemigos[], sorpresa: C
   for (const p of pedidos) {
     const def = u.bestiario.find((b) => b.id === p.plantilla_id)
     if (!def) continue
-    const cant = Math.max(1, Math.min(4, Math.floor(p.cantidad ?? 1)))
+    const propio = typeof p.nombre === 'string' && p.nombre.trim() ? p.nombre.trim().slice(0, 40) : ''
+    const cant = propio ? 1 : Math.max(1, Math.min(4, Math.floor(p.cantidad ?? 1)))
     for (let i = 0; i < cant && enemigos.length < MAX_ENEMIGOS; i++) {
       const n = (contador.get(def.id) ?? 0) + 1
       contador.set(def.id, n)
@@ -22,12 +29,13 @@ export function crearCombate(u: Universo, pedidos: PedidoEnemigos[], sorpresa: C
       enemigos.push({
         uid: `e${enemigos.length + 1}`,
         plantilla: def.id,
-        nombre: `${p.elite ? 'Élite: ' : ''}${def.nombre}${cant > 1 || n > 1 ? ' ' + n : ''}`,
+        nombre: propio || `${p.elite ? 'Élite: ' : ''}${def.nombre}${cant > 1 || n > 1 ? ' ' + n : ''}`,
         salud,
         salud_max: salud,
         tn: def.tn,
         danio: def.danio + (p.elite ? 1 : 0),
         prot: def.prot,
+        ...(propio ? { npc: (p.npc_id ? String(p.npc_id) : propio).slice(0, 40) } : {}),
       })
     }
   }
@@ -169,14 +177,10 @@ export function resolverCaidos(
         p.salud = 1
         p.penal_salud = Math.min(3, p.penal_salud + 1)
         lineas.push(`🍀 ${n} se salva por poco (Suerte ${dado.join('·')}): queda magullado (salud máxima −1 hasta el próximo capítulo).`)
-      } else if (r.complicaciones > 0) {
-        p.vivo = false
-        lineas.push(`☠️ ${n} no lo logró (Suerte ${dado.join('·')} con complicación). Murió.`)
       } else {
-        quitarCaido()
-        p.salud = 1
-        p.penal_salud = Math.min(3, p.penal_salud + 2)
-        lineas.push(`🩸 ${n} sobrevive de milagro (Suerte ${dado.join('·')}): queda herido grave (salud máxima −2 hasta el próximo capítulo).`)
+        // Letalidad Normal: si falla la Suerte, muere (antes hacía falta además sacar un 20).
+        p.vivo = false
+        lineas.push(`☠️ ${n} no lo logró (Suerte ${dado.join('·')}). Murió.`)
       }
     }
   }

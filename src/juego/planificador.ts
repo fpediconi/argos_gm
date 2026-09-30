@@ -5,6 +5,8 @@ import { mencion } from '../telegram/textos.js'
 import { aGrupo, aPrivado, refrescarTablero } from './comun.js'
 import { saltarTurno } from './turno.js'
 import { cerrarVencidas } from './votos.js'
+import { cerrarVotacionesGrupoVencidas } from './decisiones.js'
+import { botonGrupo } from './comun.js'
 
 /**
  * Se ejecuta cada minuto. Todo el estado está en la base, así que un reinicio no pierde plazos.
@@ -17,7 +19,7 @@ export async function tick(ctx: Ctx): Promise<void> {
     await ctx.colas.correr(`p${p.id}`, async () => {
       const partida = ctx.db.partida(p.id)!
       if (partida.estado !== 'EN_JUEGO' || !partida.turno_jugador_id) return
-      if (partida.paso.tipo === 'narrando') return
+      if (partida.paso.tipo === 'narrando' || partida.paso.tipo === 'confirmando_muerte') return
       const j = ctx.db.jugador(partida.turno_jugador_id)
       if (!j) return
 
@@ -26,7 +28,7 @@ export async function tick(ctx: Ctx): Promise<void> {
         if (partida.recordado < 1 && ahora >= partida.turno_desde + dur / 2 && ahora < partida.turno_vence) {
           partida.recordado = 1
           ctx.db.guardarPartida(partida)
-          await aPrivado(ctx, partida, j, `⏰ Recordatorio: te toca en «${esc(partida.guion?.titulo ?? 'la partida')}». Vence ${fechaCorta(partida.turno_vence, ctx.cfg.tzMin)}.`)
+          await aPrivado(ctx, partida, j, `⏰ Recordatorio: te toca en «${esc(partida.guion?.titulo ?? 'la partida')}». Vence ${fechaCorta(partida.turno_vence, ctx.cfg.tzMin)}.`, botonGrupo(partida, '👉 Ir a mi turno', partida.turno_msg_id))
         }
         if (partida.recordado < 2 && ahora >= partida.turno_vence) {
           partida.recordado = 2
@@ -48,6 +50,7 @@ export async function tick(ctx: Ctx): Promise<void> {
   }
 
   await cerrarVencidas(ctx)
+  await cerrarVotacionesGrupoVencidas(ctx)
 
   for (const j of ctx.db.jugadoresConAusenciaVencida(ahora)) {
     const p = ctx.db.partida(j.partida_id)

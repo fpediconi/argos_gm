@@ -38,6 +38,28 @@ export function urlUnirse(ctx: Ctx, pid: number): string {
   return `https://t.me/${ctx.botUsername}?start=u_${pid}`
 }
 
+/** Link al chat privado con el bot. */
+export function urlPrivado(ctx: Ctx): string {
+  return `https://t.me/${ctx.botUsername}`
+}
+
+/** Link directo a un mensaje del grupo. Solo existe en supergrupos (chat_id -100…). */
+export function urlMensaje(p: Pick<Partida, 'chat_id' | 'thread_id'>, msgId: number | null | undefined): string | null {
+  if (!msgId || !p.chat_id.startsWith('-100')) return null
+  const id = p.chat_id.slice(4)
+  return p.thread_id ? `https://t.me/c/${id}/${p.thread_id}/${msgId}` : `https://t.me/c/${id}/${msgId}`
+}
+
+/** Botón "volver al grupo" (al turno actual o al tablero). Vacío si el grupo no admite links. */
+export function botonGrupo(p: Partida, texto = '↩️ Volver al grupo', msgId?: number | null): Teclado {
+  const url = urlMensaje(p, msgId ?? p.turno_msg_id ?? p.tablero_msg_id)
+  return url ? [[{ text: texto, url }]] : []
+}
+
+export function botonPrivado(ctx: Ctx, texto = '💬 Ir al privado con el DJ'): Teclado {
+  return [[{ text: texto, url: urlPrivado(ctx) }]]
+}
+
 export async function refrescarTablero(ctx: Ctx, pid: number): Promise<void> {
   const partida = ctx.db.partida(pid)
   if (!partida) return

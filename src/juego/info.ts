@@ -1,11 +1,12 @@
 import type { Ctx } from '../ctx.js'
 import type { Jugador, Partida } from '../motor/tipos.js'
 import { esc, parseDuracion, formatoDuracion, fechaCorta } from '../util.js'
-import { fichaTexto, inventarioTexto, REGLAS } from '../telegram/textos.js'
+import { fichaTexto, inventarioTexto, partyTexto, REGLAS } from '../telegram/textos.js'
+import { npcsVivos } from '../motor/estado.js'
 import { estadoPresupuesto } from '../dj/presupuesto.js'
 import { transmisionRadio } from '../dj/servicios.js'
 import { registrar, refrescarTablero, pjDe, cargar } from './comun.js'
-import { avanzarTurno, enviarLibro, finalizarPartida, iniciarTurno, saltarTurno } from './turno.js'
+import { ajustarRitmo, avanzarTurno, enviarLibro, finalizarPartida, iniciarTurno, pedirFinal, saltarTurno } from './turno.js'
 import { SIN_LIMITE } from '../motor/turnos.js'
 
 type Resp = (html: string) => Promise<void>
@@ -20,13 +21,13 @@ export async function cmdInventario(ctx: Ctx, p: Partida, j: Jugador, resp: Resp
   await resp(pj ? inventarioTexto(ctx, pj) : 'No tenés personaje vivo.')
 }
 
-export async function cmdDonde(ctx: Ctx, p: Partida, _j: Jugador, resp: Resp) {
-  const m = p.mundo
-  const l = [`📍 <b>${esc(m.ubicacion || 'Sin ubicación definida')}</b>`]
-  if (p.modo_escena === 'combate' && m.combate) l.push(`⚔️ Combate, ronda ${m.combate.ronda}: ${m.combate.enemigos.filter((e) => e.salud > 0).map((e) => `${esc(e.nombre)} ${e.salud}/${e.salud_max}`).join(' · ')}`)
-  if (m.npcs.length) l.push('👥 ' + m.npcs.map((n) => `${esc(n.nombre)} (${esc(n.actitud)})`).join(' · '))
-  for (const r of m.relojes) l.push(`⏰ ${esc(r.nombre)} ${'▰'.repeat(r.llenos)}${'▱'.repeat(r.segmentos - r.llenos)}`)
-  await resp(l.join('\n'))
+/** /donde quedó como alias del resumen (que ahora incluye lugar, NPC y relojes). */
+export async function cmdDonde(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
+  await cmdResumen(ctx, p, j, resp)
+}
+
+export async function cmdParty(ctx: Ctx, p: Partida, _j: Jugador, resp: Resp) {
+  await resp(partyTexto(ctx, ctx.db.personajesVivos(p.id), ctx.db.jugadores(p.id)))
 }
 
 export async function cmdMisiones(ctx: Ctx, p: Partida, _j: Jugador, resp: Resp) {
@@ -34,18 +35,49 @@ export async function cmdMisiones(ctx: Ctx, p: Partida, _j: Jugador, resp: Resp)
   await resp(ms.length ? '🎯 <b>Misiones</b>\n' + ms.map((m) => `${m.estado === 'activa' ? '▫️' : m.estado === 'cumplida' ? '✅' : '❌'} ${esc(m.texto)}`).join('\n') : 'Todavía no hay misiones.')
 }
 
-/** Resumen personal: gratis (sin IA). Lo que pasó desde la última vez que lo viste. */
+/**
+ * Resumen (gratis, sin IA): siempre muestra los últimos hechos de la partida.
+ * Lo que pasó desde la última vez que lo miraste va marcado como nuevo.
+ */
 export async function cmdResumen(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
-  const nuevas = ctx.db.bitacoraDesde(p.id, j.ultimo_visto_n).filter((b) => b.cronica)
+  const todas = ctx.db.bitacoraTodas(p.id).filter((b) => b.cronica)
+  const ultimas = todas.slice(-10)
+  const nuevasDesde = j.ultimo_visto_n
   j.ultimo_visto_n = ctx.db.maxBitacora(p.id)
   ctx.db.guardarJugador(j)
-  const l: string[] = ['📻 <b>Resumen</b>']
-  if (nuevas.length === 0) l.push('No pasó nada nuevo desde la última vez.')
-  else l.push(...nuevas.slice(-15).map((b) => '• ' + esc(b.cronica)))
-  if (p.mundo.ubicacion) l.push('', `📍 ${esc(p.mundo.ubicacion)}`)
-  const act = p.mundo.misiones.filter((m) => m.estado === 'activa')
-  if (act.length) l.push('🎯 ' + act.map((m) => esc(m.texto)).join(' · '))
-  await resp(l.join('\n'))
+  const l: string[] = [`📻 <b>Resumen — ${esc(p.guion?.titulo ?? 'la partida')}</b>`]
+  const principal = p.mundo.misiones.find((m) => m.principal)
+  if (principal) l.push(`🎯 Objetivo${principal.estado !== 'activa' ? ` (${principal.estado})` : ''}: ${esc(principal.texto)}`)
+  l.push('')
+  if (ultimas.length === 0) l.push('La historia recién empieza.')
+  else {
+    const hayNuevas = ultimas.some((b) => b.n > nuevasDesde)
+    l.push(hayNuevas ? '<b>Últimos hechos</b> (🆕 = desde tu última consulta)' : '<b>Últimos hechos</b>')
+    for (const b of ultimas) l.push(`${b.n > nuevasDesde ? '🆕' : '•'} ${esc(b.cronica)}`)
+  }
+  const m = p.mundo
+  l.push('')
+  if (m.ubicacion) l.push(`📍 ${esc(m.ubicacion)}`)
+  if (p.modo_escena === 'combate' && m.combate) l.push(`⚔️ Combate, ronda ${m.combate.ronda}: ${m.combate.enemigos.filter((e) => e.salud > 0).map((e) => `${esc(e.nombre)} ${e.salud}/${e.salud_max}`).join(' · ')}`)
+  const act = m.misiones.filter((x) => x.estado === 'activa' && !x.principal)
+  if (act.length) l.push('📌 ' + act.map((x) => esc(x.texto)).join(' · '))
+  const presentes = npcsVivos(m)
+  if (presentes.length) l.push('👥 ' + presentes.map((n) => `${esc(n.nombre)} (${esc(n.actitud)})`).join(' · '))
+  if (m.muertos?.length) l.push('💀 ' + m.muertos.map(esc).join(', '))
+  for (const r of m.relojes) l.push(`⏰ ${esc(r.nombre)} ${'▰'.repeat(r.llenos)}${'▱'.repeat(Math.max(0, r.segmentos - r.llenos))}`)
+  if (m.decisiones?.length) l.push('🗳️ ' + m.decisiones.slice(-3).map(esc).join(' · '))
+  await resp(l.join('\n').replace(/\n{3,}/g, '\n\n').trim())
+}
+
+/** /final N: el anfitrión pide cerrar la historia en N turnos (por defecto 3). */
+export async function cmdFinal(ctx: Ctx, p: Partida, j: Jugador, args: string, resp: Resp) {
+  if (p.anfitrion_id !== j.user_id) return resp('Solo el anfitrión puede pedir el final.')
+  if (p.estado !== 'EN_JUEGO' && p.estado !== 'PAUSADA') return resp('La partida no está en juego.')
+  const n = Math.max(1, Math.min(20, Number(args.trim()) || 3))
+  pedirFinal(ctx, p.id, n)
+  registrar(ctx, p, j.id, 'sistema', `El anfitrión pidió el final en ${n} turnos.`)
+  await resp(`🏁 <b>Se viene el final.</b> La historia entra en el clímax y se cierra en ${n} turno${n === 1 ? '' : 's'}.`)
+  await refrescarTablero(ctx, p.id)
 }
 
 /** Versión Radio Yermo: una llamada corta a la IA barata. */
@@ -110,6 +142,7 @@ export async function cmdVolver(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
   j.ausente_hasta = 0
   j.saltos_seguidos = 0
   ctx.db.guardarJugador(j)
+  ajustarRitmo(ctx, p.id)
   await resp(`👋 ¡Bienvenido de vuelta, ${esc(j.nombre)}!`)
   await cmdResumen(ctx, p, j, resp)
   if (p.estado === 'PAUSADA') {
@@ -131,6 +164,7 @@ export async function cmdSalir(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
   ctx.db.guardarJugador(j)
   const pj = ctx.db.personajeVivoDe(j.id)
   registrar(ctx, p, j.id, 'sistema', `${j.nombre} deja la partida.`, `${pj?.ficha.nombre ?? j.nombre} se despide del grupo.`)
+  ajustarRitmo(ctx, p.id)
   await resp(`👋 ${esc(j.nombre)} sale de la partida. Su personaje se retira de escena.`)
   if (p.turno_jugador_id === j.id && p.estado === 'EN_JUEGO') {
     p.paso = { tipo: 'libre' }

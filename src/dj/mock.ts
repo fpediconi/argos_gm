@@ -4,11 +4,23 @@ import type { Cerebro, Decision, PeticionDecidir, PeticionTexto } from './cerebr
 export class CerebroMock implements Cerebro {
   llamadas = 0
   private n = 0
+  /** Decisiones de turno forzadas (tests): se consumen en orden antes que las simuladas. */
+  cola: Decision[] = []
+  /** Respuestas de texto forzadas por tarea (tests). */
+  textos: Partial<Record<string, string>> = {}
+  /** Últimas peticiones de turno (para inspeccionar el prompt en tests). */
+  vistas: PeticionDecidir[] = []
   /** Cada N decisiones de turno pide una tirada (si no forzarNarrar). */
   constructor(private cadaTirada = 2, private combateEn = 4) {}
   async decidir(p: PeticionDecidir): Promise<Decision> {
     this.llamadas++
     this.n++
+    this.vistas.push(p)
+    if (this.vistas.length > 20) this.vistas.shift()
+    if ((p.tarea === 'turno') && this.cola.length) {
+      const d = this.cola.shift()!
+      if (!(p.forzarNarrar && d.tipo === 'tirada')) return d
+    }
     if (!p.forzarNarrar && this.n % this.cadaTirada === 0 && p.tarea === 'turno') {
       return { tipo: 'tirada', preambulo: 'El DJ entrecierra los ojos.', pedido: { atributo: 'AGI', habilidad: 'sigilo', dificultad: 1, motivo: 'Pasar sin que te vean' } }
     }
@@ -26,6 +38,8 @@ export class CerebroMock implements Cerebro {
   }
   async texto(p: PeticionTexto): Promise<string> {
     this.llamadas++
+    const forzado = this.textos[p.tarea]
+    if (forzado !== undefined) return forzado
     switch (p.tarea) {
       case 'guion':
         return JSON.stringify({
@@ -36,7 +50,8 @@ export class CerebroMock implements Cerebro {
           lugares: [{ id: 'torre', nombre: 'Torre de radio', desc: 'Antena caída' }], secretos: ['La señal es una trampa'],
           amenaza: { nombre: 'Tormenta rad', reloj: 'Tormenta', segmentos: 6 }, finales: ['Salvar a Nora'], encuentros: [{ plantilla_id: 'saqueador', cuando: 'Al llegar a la torre' }],
         })
-      case 'trasfondo': return JSON.stringify({ trasfondo: 'Salió de casa buscando respuestas.', gancho: 'Un secreto lo persigue.' })
+      case 'trasfondo': return JSON.stringify({ bio_publica: 'Chatarrero conocido en toda la costa.', trasfondo: 'Salió de casa buscando respuestas.', gancho: 'Un secreto lo persigue.' })
+      case 'premisas': return JSON.stringify({ premisas: ['Recuperar el reactor del Torreón antes que los Hijos del Puerto', 'Escoltar una caravana de agua hasta el Refugio 88', 'Encontrar al que envenenó el pozo de Punta Mogotes'] })
       case 'reaccion': return 'Buena elección.'
       case 'resumen': return 'Resumen simulado de la aventura hasta ahora.'
       case 'radio': return '📻 Transmisión simulada: los últimos sucesos.'

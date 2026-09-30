@@ -67,21 +67,23 @@ export function tecladoArmas(ctx: Ctx, f: Partial<Ficha>): Teclado {
   return filas
 }
 
-export function tecladoInfo(pid: number): Teclado {
-  return [[
+export function tecladoInfo(pid: number, conIdeas = false): Teclado {
+  const t: Teclado = [[
     { text: '📜 Mi ficha', callback_data: `i:${pid}:ficha` },
-    { text: '🗺️ Dónde estoy', callback_data: `i:${pid}:donde` },
+    { text: '👥 Party', callback_data: `i:${pid}:party` },
   ], [
     { text: '📻 Resumen', callback_data: `i:${pid}:resumen` },
     { text: '🎒 Inventario', callback_data: `i:${pid}:inv` },
   ]]
+  if (conIdeas) t.push([{ text: '💡 Ideas', callback_data: `i:${pid}:ideas` }])
+  return t
 }
 
 export function tecladoTiradaBotones(pid: number, turnoN: number, pj: Personaje, impulso: number): Teclado {
   const fila = [{ text: '🎲 Tirar', callback_data: `r:${pid}:${turnoN}:n` }]
   const f2: Teclado[number] = []
-  if (pj.suerte > 0) f2.push({ text: `🍀 +1d20 (Suerte ${pj.suerte})`, callback_data: `r:${pid}:${turnoN}:s` })
-  if (impulso > 0) f2.push({ text: `⚡ +1d20 (Impulso ${impulso})`, callback_data: `r:${pid}:${turnoN}:i` })
+  if (pj.suerte > 0) f2.push({ text: `🍀 +1 dado (Suerte ${pj.suerte})`, callback_data: `r:${pid}:${turnoN}:s` })
+  if (impulso > 0) f2.push({ text: `⚡ +1 dado (Impulso ${impulso})`, callback_data: `r:${pid}:${turnoN}:i` })
   return f2.length ? [fila, f2] : [fila]
 }
 
@@ -114,4 +116,9 @@ export function tecladoMejora(ctx: Ctx, capitulo: number): Teclado {
   const f: Teclado = ctx.u.grupos.map((g) => [{ text: `⬆️ Habilidad de ${g.nombre.toLowerCase()}`, callback_data: `m:g:${g.id}` }])
   if (capitulo % 2 === 0) f.push([{ text: '⬆️ Un atributo', callback_data: 'm:a' }])
   return f
+}
+
+/** Confirmación de una muerte elegida por el propio jugador. */
+export function tecladoMuerte(pid: number, turnoN: number, nombre: string): Teclado {
+  return [[{ text: `☠️ Sí, ${nombre} muere`, callback_data: `d:${pid}:${turnoN}:s` }], [{ text: '↩️ No, me arrepiento', callback_data: `d:${pid}:${turnoN}:n` }]]
 }

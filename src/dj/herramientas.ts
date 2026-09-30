@@ -36,7 +36,7 @@ export function herramientasDe(u: Universo) {
         properties: {
           narracion: { type: 'string', description: 'Máximo 120 palabras. Termina con una situación abierta.' },
           cronica: { type: 'string', description: 'Resumen del turno en máximo 20 palabras, tercera persona.' },
-          sugerencias: { type: 'array', items: { type: 'string' }, description: 'Hasta 3 ideas cortas para el próximo jugador' },
+          sugerencias: { type: 'array', items: { type: 'string' }, description: 'Hasta 3 ideas cortas para el próximo jugador (se muestran solo si las pide)' },
           cambios: {
             type: 'object',
             description: 'Cambios propuestos; el motor los valida. Los ids de personaje son P1, P2... como figuran en el estado.',
@@ -49,14 +49,20 @@ export function herramientasDe(u: Universo) {
               relojes: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, nombre: { type: 'string' }, delta: { type: 'integer' }, segmentos: { type: 'integer' } }, required: ['id', 'delta'] } },
               ubicacion: { type: 'string' },
               misiones: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, texto: { type: 'string' }, estado: { type: 'string', enum: ['activa', 'cumplida', 'fallida'] } }, required: ['id', 'texto'] } },
-              npcs: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, nombre: { type: 'string' }, actitud: { type: 'string' }, nota: { type: 'string' } }, required: ['id', 'nombre'] } },
+              npcs: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, nombre: { type: 'string' }, actitud: { type: 'string' }, nota: { type: 'string' }, estado: { type: 'string', enum: ['vivo', 'herido', 'muerto', 'huido'] } }, required: ['id', 'nombre'] } },
+              muerte: {
+                type: 'object',
+                description: 'Muerte de un personaje FUERA de combate: la elige su propio jugador (elegida=true) o viene de una tirada fallida con riesgo mortal.',
+                properties: { pj: { type: 'string' }, motivo: { type: 'string' }, elegida: { type: 'boolean' } },
+                required: ['pj'],
+              },
             },
           },
           combate: {
             type: 'object',
             description: 'Usalo SOLO si empieza un combate. Elegí enemigos del bestiario por ID.',
             properties: {
-              enemigos: { type: 'array', items: { type: 'object', properties: { plantilla_id: { type: 'string', enum: enemigoIds }, cantidad: { type: 'integer' }, elite: { type: 'boolean' } }, required: ['plantilla_id'] } },
+              enemigos: { type: 'array', items: { type: 'object', properties: { plantilla_id: { type: 'string', enum: enemigoIds }, cantidad: { type: 'integer' }, elite: { type: 'boolean' }, nombre: { type: 'string', description: 'Nombre propio si es un NPC de la historia (civil, guardia o jefe)' }, npc_id: { type: 'string' } }, required: ['plantilla_id'] } },
               sorpresa: { type: 'string', enum: ['jugadores', 'enemigos', 'ninguna'] },
             },
             required: ['enemigos'],

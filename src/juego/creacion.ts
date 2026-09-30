@@ -10,7 +10,8 @@ import { generarTrasfondo, reaccionar } from '../dj/servicios.js'
 import { esc, recortar } from '../util.js'
 import { fichaTexto } from '../telegram/textos.js'
 import { tecladoArmas, tecladoArquetipos, tecladoAtributos, tecladoHabilidades, tecladoMejora, tecladoOrigenes } from '../telegram/teclados.js'
-import { aGrupo, refrescarTablero, registrar } from './comun.js'
+import { aGrupo, botonGrupo, refrescarTablero, registrar } from './comun.js'
+import { ajustarRitmo } from './turno.js'
 
 const PREGUNTAS = [
   '¿Qué te sacó de casa (o del refugio)?',
@@ -87,7 +88,7 @@ export async function unirse(ctx: Ctx, from: TgUser, dmChatId: string, pid: numb
 
 // ------------------------------------------------------------------ pasos
 
-async function mostrarPaso(ctx: Ctx, partida: Partida, j: Jugador, msgId?: number): Promise<void> {
+async function mostrarPaso(ctx: Ctx, partida: Partida, j: Jugador, msgId?: number, prefijo = ''): Promise<void> {
   const c = j.creacion!
   const chat = j.dm_chat_id!
   const b = c.borrador
@@ -118,10 +119,10 @@ async function mostrarPaso(ctx: Ctx, partida: Partida, j: Jugador, msgId?: numbe
       return mostrar(ctx, chat, undefined, '💬 Una frase típica que diría tu personaje.')
     case 'q0': case 'q1': case 'q2': {
       const n = Number(c.paso[1])
-      return mostrar(ctx, chat, undefined, `📖 <b>Pregunta ${n + 1}/3</b>\n${PREGUNTAS[n]}`)
+      return mostrar(ctx, chat, undefined, `${prefijo}📖 <b>Pregunta ${n + 1}/3</b>\n${PREGUNTAS[n]}`)
     }
     case 'arma':
-      return mostrar(ctx, chat, msgId, '🔫 <b>Elegí tu arma principal</b> (el número es el daño)', tecladoArmas(ctx, b))
+      return mostrar(ctx, chat, msgId, `${prefijo}🔫 <b>Elegí tu arma principal</b> (el número es el daño)`, tecladoArmas(ctx, b))
     case 'confirmar': {
       const ficha = fichaDesdeBorrador(c)
       const base = construirPersonaje(ctx.u, ficha)
@@ -244,7 +245,7 @@ export async function textoCreacion(ctx: Ctx, from: TgUser, texto: string): Prom
   const b = c.borrador
   const t = recortar(texto.replace(/[<>]/g, ' ').replace(/\s+/g, ' '), 200)
   if (!t) return true
-  const sigue = async (paso: string) => { c.paso = paso; ctx.db.guardarJugador(j); await mostrarPaso(ctx, partida, j) }
+  const sigue = async (paso: string, prefijo = '') => { c.paso = paso; ctx.db.guardarJugador(j); await mostrarPaso(ctx, partida, j, undefined, prefijo) }
   switch (c.paso) {
     case 'nombre': b.nombre = recortar(t, 40); return (await sigue('aspecto'), true)
     case 'aspecto': b.aspecto = t; return (await sigue('frase'), true)
@@ -253,11 +254,13 @@ export async function textoCreacion(ctx: Ctx, from: TgUser, texto: string): Prom
       const n = Number(c.paso[1])
       b.respuestas = [...(b.respuestas ?? [])]
       b.respuestas[n] = t
+      // El comentario del DJ va en el mismo mensaje que la próxima pregunta: una sola voz pregunta.
+      let prefijo = ''
       if (c.modo === 'entrevista') {
         const r = await reaccionar(ctx, PREGUNTAS[n], t)
-        if (r) await ctx.api.enviar(j.dm_chat_id!, `🎙️ <i>${esc(r)}</i>`)
+        if (r) prefijo = `🎙️ <i>${esc(r)}</i>\n\n`
       }
-      return (await sigue(n < 2 ? `q${n + 1}` : 'arma'), true)
+      return (await sigue(n < 2 ? `q${n + 1}` : 'arma', prefijo), true)
     }
   }
   return false
@@ -271,20 +274,22 @@ async function confirmarPersonaje(ctx: Ctx, partida: Partida, j: Jugador, msgId:
   const errores = validarReparto(ctx.u, ficha)
   if (errores.length) return errores[0]
   const base = construirPersonaje(ctx.u, ficha)
-  const { trasfondo, gancho } = await generarTrasfondo(ctx, partida.id, ficha)
+  const { trasfondo, gancho, bio } = await generarTrasfondo(ctx, partida.id, ficha)
   base.trasfondo = trasfondo
   base.gancho = gancho
+  if (bio) base.ficha.bio = bio
   const pj = ctx.db.crearPersonaje(partida.id, j.id, base)
   const enJuego = partida.estado === 'EN_JUEGO' || partida.estado === 'PAUSADA'
   j.estado = enJuego ? 'activo' : 'listo'
   j.creacion = null
   ctx.db.guardarJugador(j)
   if (msgId) await ctx.api.quitarTeclado(j.dm_chat_id!, msgId)
-  await ctx.api.enviar(j.dm_chat_id!, `✅ <b>¡Personaje listo!</b>\n\n${fichaTexto(ctx, pj)}\n\nVolvé al grupo. ${enJuego ? 'Entrás en el próximo turno.' : 'Cuando estén todos, el anfitrión empieza la aventura.'}`)
+  await ctx.api.enviar(j.dm_chat_id!, `✅ <b>¡Personaje listo!</b>\n\n${fichaTexto(ctx, pj)}\n\nVolvé al grupo. ${enJuego ? 'Entrás en el próximo turno.' : 'Cuando estén todos, el anfitrión empieza la aventura.'}`, { teclado: botonGrupo(partida) })
   if (enJuego) {
     registrar(ctx, partida, j.id, 'sistema', `${pj.ficha.nombre} se une a la aventura.`, `${pj.ficha.nombre} se une al grupo.`)
     await aGrupo(ctx, partida, `🧑‍🚀 <b>${esc(pj.ficha.nombre)}</b> (${esc(j.nombre)}) se suma a la aventura.`)
     if (partida.estado === 'PAUSADA') { partida.estado = 'EN_JUEGO'; ctx.db.guardarPartida(partida) }
+    ajustarRitmo(ctx, partida.id)
   } else {
     await aGrupo(ctx, partida, `✅ <b>${esc(j.nombre)}</b> ya tiene personaje.`)
   }
@@ -321,9 +326,17 @@ export async function callbackMejora(ctx: Ctx, from: TgUser, msgId: number | und
   ctx.db.guardarPersonaje(pj)
   j.mejora_pendiente = false
   ctx.db.guardarJugador(j)
-  await mostrar(ctx, chat, msgId, `✅ <b>${esc(pj.ficha.nombre)}</b> mejoró: ${esc(que)}.`)
+  await mostrar(ctx, chat, msgId, `✅ <b>${esc(pj.ficha.nombre)}</b> mejoró: ${esc(que)}.`, botonGrupo(partida))
 }
 
 export function tecladoMejoraInicial(ctx: Ctx, capitulo: number): Teclado {
   return tecladoMejora(ctx, capitulo)
+}
+
+/** ¿El usuario está en un paso de la creación que espera texto? (para decidir si vale transcribir un audio). */
+export function esperaTextoCreacion(ctx: Ctx, userId: string): boolean {
+  const partida = contextoDe(ctx, userId)
+  if (!partida) return false
+  const j = jugadorDe(ctx, partida, userId)
+  return !!j?.creacion && PASOS_TEXTO.includes(j.creacion.paso)
 }

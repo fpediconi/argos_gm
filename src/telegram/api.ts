@@ -12,10 +12,15 @@ export interface TgMessage {
   reply_to_message?: { message_id: number; from?: TgUser }
   migrate_to_chat_id?: number
   migrate_from_chat_id?: number
+  new_chat_members?: TgUser[]
+  voice?: TgAudio
+  audio?: TgAudio
 }
+export interface TgAudio { file_id: string; duration: number; mime_type?: string; file_size?: number }
+export interface TgPollAnswer { poll_id: string; user?: TgUser; option_ids: number[] }
 export interface TgCallback { id: string; from: TgUser; message?: TgMessage; data?: string }
 export interface TgMyChatMember { chat: TgChat; from: TgUser; new_chat_member: { status: string; user: TgUser } }
-export interface TgUpdate { update_id: number; message?: TgMessage; callback_query?: TgCallback; my_chat_member?: TgMyChatMember }
+export interface TgUpdate { update_id: number; message?: TgMessage; callback_query?: TgCallback; my_chat_member?: TgMyChatMember; poll_answer?: TgPollAnswer }
 
 export type Boton = { text: string; callback_data?: string; url?: string }
 export type Teclado = Boton[][]
@@ -36,6 +41,12 @@ export interface ApiTelegram {
   quitarTeclado(chatId: string, messageId: number): Promise<void>
   responderCallback(id: string, texto?: string, alerta?: boolean): Promise<void>
   fijar(chatId: string, messageId: number): Promise<boolean>
+  desfijar(chatId: string, messageId: number): Promise<void>
+  /** Encuesta nativa (no anónima, para saber quién votó). */
+  encuesta(chatId: string, pregunta: string, opciones: string[], op?: OpcionesEnvio): Promise<{ messageId: number; pollId: string }>
+  cerrarEncuesta(chatId: string, messageId: number): Promise<void>
+  /** Descarga un archivo (audio) de Telegram. */
+  descargar(fileId: string): Promise<{ datos: Uint8Array; ruta: string }>
   documento(chatId: string, nombre: string, contenido: string, caption?: string, op?: OpcionesEnvio): Promise<void>
   escribiendo(chatId: string, threadId?: number | null): Promise<void>
   setComandos(comandos: { command: string; description: string }[]): Promise<void>
@@ -110,7 +121,7 @@ export class TelegramReal implements ApiTelegram {
     return this.llamar<TgUser>('getMe', {})
   }
   getUpdates(offset: number, timeoutSeg: number) {
-    return this.llamar<TgUpdate[]>('getUpdates', { offset, timeout: timeoutSeg, allowed_updates: ['message', 'callback_query', 'my_chat_member'] }, (timeoutSeg + 15) * 1000)
+    return this.llamar<TgUpdate[]>('getUpdates', { offset, timeout: timeoutSeg, allowed_updates: ['message', 'callback_query', 'my_chat_member', 'poll_answer'] }, (timeoutSeg + 15) * 1000)
   }
 
   async enviar(chatId: string, html: string, op: OpcionesEnvio = {}): Promise<number> {
@@ -173,6 +184,41 @@ export class TelegramReal implements ApiTelegram {
     } catch {
       return false
     }
+  }
+
+  async desfijar(chatId: string, messageId: number): Promise<void> {
+    try {
+      await this.llamar('unpinChatMessage', { chat_id: chatId, message_id: messageId })
+    } catch {
+      /* ya no estaba fijado o no hay permiso */
+    }
+  }
+
+  async encuesta(chatId: string, pregunta: string, opciones: string[], op: OpcionesEnvio = {}): Promise<{ messageId: number; pollId: string }> {
+    await this.espaciar(chatId)
+    const r = await this.llamar<{ message_id: number; poll: { id: string } }>('sendPoll', {
+      chat_id: chatId,
+      question: pregunta.slice(0, 300),
+      options: opciones.map((o) => ({ text: o.slice(0, 100) })),
+      is_anonymous: false,
+      ...(op.threadId ? { message_thread_id: op.threadId } : {}),
+    })
+    return { messageId: r.message_id, pollId: r.poll.id }
+  }
+
+  async cerrarEncuesta(chatId: string, messageId: number): Promise<void> {
+    try {
+      await this.llamar('stopPoll', { chat_id: chatId, message_id: messageId })
+    } catch {
+      /* ya estaba cerrada */
+    }
+  }
+
+  async descargar(fileId: string): Promise<{ datos: Uint8Array; ruta: string }> {
+    const f = await this.llamar<{ file_path: string }>('getFile', { file_id: fileId })
+    const res = await fetch(`https://api.telegram.org/file/bot${this.token}/${f.file_path}`, { signal: AbortSignal.timeout(60_000) })
+    if (!res.ok) throw new ErrorTelegram(`descarga: ${res.status}`, res.status)
+    return { datos: new Uint8Array(await res.arrayBuffer()), ruta: f.file_path }
   }
 
   async documento(chatId: string, nombre: string, contenido: string, caption?: string, op: OpcionesEnvio = {}): Promise<void> {

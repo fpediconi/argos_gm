@@ -1,4 +1,4 @@
-import type { Mundo, Personaje, Universo, Reloj } from './tipos.js'
+import type { EstadoNpc, Mundo, Personaje, Universo, Reloj } from './tipos.js'
 import { cantidadItems, darItem, esCaido, quitarItem, saludMaxEfectiva, tieneItem } from './personaje.js'
 import { cargaMax } from './reglas.js'
 
@@ -12,7 +12,9 @@ export interface Cambios {
   relojes?: { id: string; nombre?: string; delta: number; segmentos?: number }[]
   ubicacion?: string
   misiones?: { id: string; texto: string; estado?: 'activa' | 'cumplida' | 'fallida' }[]
-  npcs?: { id: string; nombre: string; actitud?: string; nota?: string }[]
+  npcs?: { id: string; nombre: string; actitud?: string; nota?: string; estado?: EstadoNpc }[]
+  /** Muerte de un personaje fuera de combate. La valida y aplica el juego (letalidad, confirmación). */
+  muerte?: { pj: string; motivo?: string; elegida?: boolean }
 }
 
 export interface ResultadoCambios {
@@ -26,11 +28,14 @@ const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n))
 const slug = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24)
 const RESERVADAS = ['caido', 'muerto']
 
+const ESTADOS_NPC: EstadoNpc[] = ['vivo', 'herido', 'muerto', 'huido']
+export const MAX_MISIONES_ACTIVAS = 4
+
 export function claveJugador(p: Personaje): string {
   return `P${p.id}`
 }
 
-function buscarPj(pjs: Personaje[], ref: string): Personaje | undefined {
+export function buscarPj(pjs: Personaje[], ref: string): Personaje | undefined {
   const r = String(ref ?? '').trim().toLowerCase()
   return pjs.find((p) => claveJugador(p).toLowerCase() === r || p.ficha.nombre.toLowerCase() === r || String(p.id) === r)
 }
@@ -127,27 +132,68 @@ export function aplicarCambios(u: Universo, mundo: Mundo, pjs: Personaje[], c: C
     if (!id) continue
     const ex = mundo.misiones.find((x) => x.id === id)
     if (ex) {
-      if (m.estado) ex.estado = m.estado
-      if (m.texto) ex.texto = m.texto.slice(0, 120)
-    } else if (mundo.misiones.filter((x) => x.estado === 'activa').length < 6) {
+      if (m.estado && m.estado !== ex.estado) {
+        ex.estado = m.estado
+        res.aplicados.push(`misión ${m.estado === 'cumplida' ? 'cumplida ✅' : m.estado === 'fallida' ? 'fallida ❌' : 'reabierta'}: ${ex.texto}`)
+      }
+      // La misión principal (la premisa del grupo) no se reescribe.
+      if (m.texto && !ex.principal) ex.texto = m.texto.slice(0, 120)
+    } else if (mundo.misiones.filter((x) => x.estado === 'activa' && !x.principal).length < MAX_MISIONES_ACTIVAS) {
       mundo.misiones.push({ id, texto: (m.texto ?? id).slice(0, 120), estado: m.estado ?? 'activa' })
+    } else {
+      res.rechazados.push('misiones: demasiadas abiertas, cerrá alguna antes')
     }
   }
-  mundo.misiones = mundo.misiones.filter((m) => m.estado === 'activa' || mundo.misiones.indexOf(m) >= mundo.misiones.length - 8)
+  mundo.misiones = mundo.misiones.filter((m) => m.principal || m.estado === 'activa' || mundo.misiones.indexOf(m) >= mundo.misiones.length - 8)
 
   for (const n of c.npcs ?? []) {
     const id = slug(n.id || n.nombre || '')
     if (!id) continue
-    const ex = mundo.npcs.find((x) => x.id === id)
+    const estado = ESTADOS_NPC.includes(n.estado as EstadoNpc) ? (n.estado as EstadoNpc) : undefined
+    const ex = mundo.npcs.find((x) => x.id === id) ?? mundo.npcs.find((x) => n.nombre && x.nombre.toLowerCase() === n.nombre.toLowerCase())
+    const nombre = (n.nombre ?? ex?.nombre ?? id).slice(0, 40)
+    if (esNpcMuerto(mundo, nombre) && estado !== 'muerto') {
+      res.rechazados.push(`npc: ${nombre} está muerto y no puede volver`)
+      continue
+    }
     if (ex) {
       if (n.actitud) ex.actitud = n.actitud.slice(0, 30)
       if (n.nota) ex.nota = n.nota.slice(0, 80)
+      if (estado && estado !== (ex.estado ?? 'vivo')) {
+        ex.estado = estado
+        if (estado === 'muerto') marcarNpcMuerto(mundo, ex.nombre, res)
+        else res.aplicados.push(`${ex.nombre}: ${estado}`)
+      }
     } else {
-      mundo.npcs.push({ id, nombre: (n.nombre ?? id).slice(0, 40), actitud: (n.actitud ?? 'neutral').slice(0, 30), nota: (n.nota ?? '').slice(0, 80) })
-      if (mundo.npcs.length > 8) mundo.npcs.shift()
+      const nuevo = { id, nombre, actitud: (n.actitud ?? 'neutral').slice(0, 30), nota: (n.nota ?? '').slice(0, 80), estado: estado ?? 'vivo' }
+      mundo.npcs.push(nuevo)
+      if (estado === 'muerto') marcarNpcMuerto(mundo, nombre, res)
+      // Se descarta primero a los muertos o idos, después al más viejo.
+      while (mundo.npcs.length > 8) {
+        const i = mundo.npcs.findIndex((x) => x.estado === 'muerto' || x.estado === 'huido')
+        mundo.npcs.splice(i >= 0 ? i : 0, 1)
+      }
     }
   }
   return res
+}
+
+export function esNpcMuerto(mundo: Mundo, nombre: string): boolean {
+  return (mundo.muertos ?? []).some((m) => m.toLowerCase() === nombre.toLowerCase())
+}
+
+export function marcarNpcMuerto(mundo: Mundo, nombre: string, res?: ResultadoCambios): void {
+  mundo.muertos = mundo.muertos ?? []
+  if (!esNpcMuerto(mundo, nombre)) {
+    mundo.muertos.push(nombre)
+    res?.aplicados.push(`💀 ${nombre} muere`)
+  }
+  const n = mundo.npcs.find((x) => x.nombre.toLowerCase() === nombre.toLowerCase())
+  if (n) n.estado = 'muerto'
+}
+
+export function npcsVivos(mundo: Mundo) {
+  return mundo.npcs.filter((n) => n.estado !== 'muerto' && n.estado !== 'huido')
 }
 
 export function mundoVacio(): Mundo {

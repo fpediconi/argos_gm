@@ -12,6 +12,7 @@
     "test": "tsx --test tests/*.test.ts",
     "simular": "tsx scripts/simular.ts",
     "probar-ia": "tsx scripts/probar-ia.ts",
+    "probar-libertad": "tsx scripts/probar-libertad.ts",
     "verificar": "npm run typecheck && npm test && npm run simular -- --silencioso"
   },
   "dependencies": {

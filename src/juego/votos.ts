@@ -22,6 +22,12 @@ export async function proponerSaltear(ctx: Ctx, pid: number, userId: string): Pr
   if (!solicitante) return 'Solo jugadores de la partida pueden proponerlo.'
   const objetivo = jugadores.find((j) => j.id === partida.turno_jugador_id)!
   if (objetivo.id === solicitante.id) return 'Si no vas a poder jugar, usá /pasar o /ausente.'
+  // Skip directo: no hay que esperar a que venza ni votar.
+  if (partida.config.plazoH === -1) {
+    if (partida.paso.tipo === 'narrando') return 'El DJ está narrando: esperá un segundo.'
+    await saltarTurno(ctx, pid, 'directo')
+    return
+  }
   if (ctx.db.votacionAbierta(pid)) return 'Ya hay una votación abierta.'
   const ahora = ctx.reloj.ahora()
   const vence = partida.turno_vence === SIN_LIMITE ? partida.turno_desde + 48 * H : partida.turno_vence

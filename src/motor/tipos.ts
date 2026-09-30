@@ -52,6 +52,8 @@ export interface Ficha {
   frase: string
   arma: string
   respuestas: string[]
+  /** Biografía pública (la ve la party). El trasfondo completo es privado. */
+  bio?: string
 }
 
 export interface ItemInv { id: string; n: number }
@@ -82,13 +84,22 @@ export interface ConfigPartida {
   universo: string
   escenario: string
   tono: string
-  duracion: 'oneshot' | 'mini' | 'abierta'
-  plazoH: number // 0 = sin plazo
+  duracion: Duracion
+  plazoH: number // 0 = nunca se vence · -1 = skip directo (/saltear sin esperar ni votar)
   letalidad: 'suave' | 'normal' | 'hardcore'
   evitar: string[]
   silencio: [number, number] | null // horas [ini, fin) en hora local
   plazoMaxH: number // piloto automático (0 = nunca)
+  violencia?: 'implicita' | 'explicita'
+  pvp?: boolean
+  /** Premisa de campaña elegida antes de arrancar (vacía = la decide el DJ). */
+  premisa?: string
+  /** Premisas propuestas por el guionista durante el asistente. */
+  premisasOpc?: string[]
+  esperandoPremisa?: boolean
 }
+
+export type Duracion = 'corta' | 'oneshot' | 'mini' | 'abierta'
 
 export interface Partida {
   id: number
@@ -120,10 +131,11 @@ export interface Partida {
 export type Paso =
   | { tipo: 'libre' }
   | { tipo: 'esperando_accion' }
-  | { tipo: 'narrando'; accion: string; jugadorId: number; tirada?: TiradaResuelta }
+  | { tipo: 'narrando'; accion: string; jugadorId: number; tirada?: TiradaResuelta; msgTirada?: number }
   | { tipo: 'esperando_tirada'; accion: string; jugadorId: number; pedido: PedidoTirada }
   | { tipo: 'esperando_libre'; jugadorId: number }
   | { tipo: 'esperando_mejora' }
+  | { tipo: 'confirmando_muerte'; jugadorId: number }
 
 export interface Jugador {
   id: number
@@ -152,11 +164,14 @@ export interface Creacion {
 }
 
 export interface Reloj { id: string; nombre: string; segmentos: number; llenos: number }
-export interface NpcActivo { id: string; nombre: string; actitud: string; nota: string }
-export interface Mision { id: string; texto: string; estado: 'activa' | 'cumplida' | 'fallida' }
+export type EstadoNpc = 'vivo' | 'herido' | 'muerto' | 'huido'
+export interface NpcActivo { id: string; nombre: string; actitud: string; nota: string; estado?: EstadoNpc }
+export interface Mision { id: string; texto: string; estado: 'activa' | 'cumplida' | 'fallida'; principal?: boolean }
 export interface EnemigoEnCombate {
   uid: string; plantilla: string; nombre: string; salud: number; salud_max: number
   tn: number; danio: number; prot: number
+  /** Si el enemigo es un NPC con nombre, su id en mundo.npcs (al morir queda muerto). */
+  npc?: string
 }
 export interface Combate {
   ronda: number
@@ -174,6 +189,58 @@ export interface Mundo {
   impulso: number
   combate: Combate | null
   senalX?: boolean
+  ritmo?: Ritmo
+  /** Hechos decididos por el grupo (votaciones, líder, repartos). */
+  decisiones?: string[]
+  /** NPC muertos: no pueden reaparecer. */
+  muertos?: string[]
+  /** Usuarios que ya recibieron la bienvenida automática. */
+  bienvenidos?: string[]
+  /** A quién ya se le avisó "esperá tu turno" en el turno actual. */
+  avisos?: { turno: number; ids: string[] }
+  /** Ideas del DJ para el próximo turno (se muestran a pedido). */
+  ideas?: string[]
+  votacion?: VotacionGrupo | null
+  /** Muerte elegida esperando confirmación del jugador. */
+  muertePendiente?: MuertePendiente | null
+}
+
+/** Director de ritmo: lo lleva el motor, no la IA. */
+export interface Ritmo {
+  /** Turnos narrados en el capítulo actual. */
+  turnos: number
+  /** Turnos objetivo del capítulo (rondas × jugadores). */
+  objetivo: number
+  /** Tope pedido con /final (turnos absolutos del capítulo). */
+  tope?: number
+  /** /final: este capítulo es el último aunque la campaña sea abierta. */
+  finalPedido?: boolean
+  /** Turno del capítulo en el que toca el próximo evento obligatorio. */
+  proximoEvento: number
+  /** Instrucción del evento que todavía no ocurrió. */
+  eventoPendiente?: string
+  secretosRevelados: number
+  /** El próximo turno cierra el capítulo. */
+  cierrePendiente?: boolean
+  /** El reloj de amenaza se llenó: el capítulo está en clímax pase lo que pase. */
+  climaxForzado?: boolean
+}
+
+export interface VotacionGrupo {
+  pollId: string
+  msgId: number
+  pregunta: string
+  opciones: string[]
+  votos: Record<string, number>
+  cierra: number
+  autor: string
+}
+
+export interface MuertePendiente {
+  pjId: number
+  jugadorId: number
+  salida: unknown
+  accion: string
 }
 
 export interface GuionMaestro {

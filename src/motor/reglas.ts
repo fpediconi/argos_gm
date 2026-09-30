@@ -61,3 +61,31 @@ export function nombreHab(u: Universo, id: string): string {
 export function textoDificultad(d: number): string {
   return ['trivial', 'Normal', 'Difícil', 'Muy difícil', 'Épica'][Math.min(4, Math.max(0, d))] ?? 'Normal'
 }
+
+/**
+ * Probabilidad exacta de alcanzar `dificultad` éxitos con `n` d20 contra `tn`
+ * (con críticos de especialidad: un dado <= rango vale 2). Enumera 20^n casos (n <= 3).
+ */
+export function probabilidadExito(tn: number, rango: number, especialidad: boolean, dificultad: number, n = DADOS_BASE): number {
+  const exitosDe = (d: number) => (d <= tn ? (especialidad && rango > 0 && d <= rango ? 2 : 1) : 0)
+  let ok = 0
+  let casos = 0
+  const rec = (k: number, acum: number) => {
+    if (k === 0) {
+      casos++
+      if (acum >= dificultad) ok++
+      return
+    }
+    for (let d = 1; d <= 20; d++) rec(k - 1, acum + exitosDe(d))
+  }
+  rec(Math.max(1, Math.min(DADOS_MAX, n)), 0)
+  return ok / casos
+}
+
+export type Semaforo = { emoji: string; texto: string }
+
+export function semaforo(p: number): Semaforo {
+  if (p >= 0.65) return { emoji: '🟩', texto: 'fácil' }
+  if (p >= 0.35) return { emoji: '🟨', texto: 'parejas' }
+  return { emoji: '🟥', texto: 'difícil' }
+}

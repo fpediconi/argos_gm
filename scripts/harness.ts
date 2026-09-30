@@ -18,6 +18,7 @@ export const cfgPrueba: Config = {
   modelos: { narrador: 'm', util: 'm', guionista: 'm' },
   precios: { narrador: { in: 1, cache: 0.1, out: 4 }, util: { in: 0.2, cache: 0.02, out: 1 }, guionista: { in: 1, cache: 0.1, out: 4 } },
   maxSalidaNarrador: 800, presupuestoPartidaUsd: 0.5, presupuestoGlobalUsd: 2, dbPath: ':memory:', tzMin: -180, puerto: 0, fusibleOff: false,
+  modeloTranscripcion: 'whisper-1', precioTranscripcionMin: 0.006, maxAudioSeg: 90,
 }
 
 /** Dados deterministas: secuencia pseudoaleatoria reproducible en 1..20. */
@@ -91,12 +92,12 @@ export class Jugadores {
 }
 
 /** Monta grupo + partida configurada + N personajes; devuelve pid. */
-export async function partidaLista(m: Mundo, ids = [101, 102, 103]) {
+export async function partidaLista(m: Mundo, ids = [101, 102, 103], opts: Record<string, string> = {}) {
   const j = new Jugadores(m)
   await j.agregarBot()
   await j.grupo(101, '/nueva')
   const p = m.ctx.db.partidaActivaDeChat(GRUPO)!
-  for (const k of ['esc', 'ton', 'dur', 'pla', 'let', 'evi', 'sil']) await j.tocar(101, `w:${p.id}:${k}:${k === 'dur' ? 'mini' : 'ok'}`, GRUPO, p.wizard_msg_id ?? 1)
+  for (const k of ['esc', 'ton', 'dur', 'pla', 'let', 'vio', 'pvp', 'evi', 'sil', 'pre']) await j.tocar(101, `w:${p.id}:${k}:${opts[k] ?? (k === 'dur' ? 'mini' : 'ok')}`, GRUPO, p.wizard_msg_id ?? 1)
   const orig = ['refugio', 'superviviente', 'necrotico', 'hermandad']
   const arqs = ['soldado', 'explorador', 'cara', 'tecnico']
   for (let i = 0; i < ids.length; i++) await j.crearPersonaje(ids[i], p.id, { origen: orig[i], arq: arqs[i] })
