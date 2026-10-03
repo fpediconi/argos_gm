@@ -11,6 +11,7 @@ import type { Teclado } from '../telegram/api.js'
 import { aGrupo, cargar, pjDe, refrescarTablero, registrar } from './comun.js'
 import { avanzarTurno, avisarMuerte, iniciarTurno } from './turno.js'
 import { marcarNpcMuerto } from '../motor/estado.js'
+import { ofrecerFinal } from './narrativa.js'
 
 function consumiblesDe(ctx: Ctx, pj: Personaje) {
   const robot = ctx.u.origenes.find((o) => o.id === pj.ficha.origen)?.robot
@@ -68,7 +69,13 @@ async function narrarYEnviar(ctx: Ctx, pid: number, cierre: string): Promise<voi
   } catch (e) {
     if (!(e instanceof ErrorPresupuesto)) ctx.log('narrarRonda falló', (e as Error).message)
   }
-  const cronica = `Combate, ronda ${c.ronda}: ${vivos(c).length} enemigo(s) en pie${cierre.includes('derrotados') ? ' (victoria)' : ''}.`
+  // Crónica legible (la leen /resumen y el aviso de "te toca"): quién cayó y cómo quedó.
+  const sinTagsLog = c.log.map(sinTags).join(' ')
+  const cayeron = [...sinTagsLog.matchAll(/💀 (.+?) cae/g)].map((x) => x[1])
+  const heridos = [...sinTagsLog.matchAll(/(?:pega a |a )([^:]+?):? .*?queda caído/g)].map((x) => x[1])
+  const quedan = vivos(c).length
+  const partes = [cayeron.length ? `cayó ${cayeron.join(', ')}` : '', heridos.length ? `${heridos.join(', ')} quedó en el piso` : '', quedan === 1 ? 'queda 1 enemigo' : quedan ? `quedan ${quedan} enemigos` : 'no queda ningún enemigo en pie']
+  const cronica = `Combate, ronda ${c.ronda}: ${partes.filter(Boolean).join('; ')}.`
   registrar(ctx, partida, null, 'narracion', texto || c.log.join(' '), cronica)
   if (texto) await aGrupo(ctx, partida, `🎲 <i>${textoIA(texto)}</i>`)
 }
@@ -112,8 +119,13 @@ export async function cerrarCombate(ctx: Ctx, pid: number, resultado: 'victoria'
         ? 'Todos los personajes cayeron: los enemigos ganaron. En esta mesa caer es morir: narrá el final de los caídos.'
         : 'Todos los personajes cayeron: los enemigos ganaron. Narrá la escena; el motor decide después quién sobrevive según la Suerte de cada uno.',
   )
-  const lineas = resolverCaidos(pjs, partida.config.letalidad, ctx.rng)
+  const salvados: Personaje[] = []
+  const lineas = resolverCaidos(pjs, partida.config.letalidad, ctx.rng, salvados)
   for (const p of pjs) ctx.db.guardarPersonaje(p)
+  for (const p of salvados) {
+    const jj = ctx.db.jugador(p.jugador_id)
+    if (jj) await ofrecerFinal(ctx, partida, jj, p)
+  }
   const p2 = ctx.db.partida(pid)!
   // Los NPC con nombre que cayeron en combate quedan muertos en la historia.
   for (const e of c.enemigos) if (e.npc && e.salud <= 0) marcarNpcMuerto(p2.mundo, e.nombre)
@@ -127,7 +139,8 @@ export async function cerrarCombate(ctx: Ctx, pid: number, resultado: 'victoria'
   p2.paso = { tipo: 'libre' }
   ctx.db.guardarPartida(p2)
   registrar(ctx, p2, null, 'sistema', `Combate terminado (${resultado}) tras ${c.ronda} ronda(s).`)
-  if (lineas.length) await aGrupo(ctx, p2, lineas.join('\n'))
+  const titulo = { victoria: '🏆 <b>Ganaron el combate.</b>', derrota: '💀 <b>Perdieron el combate.</b>', tregua: '🕊️ <b>El combate terminó.</b>' }[resultado]
+  await aGrupo(ctx, p2, [titulo, ...lineas.map(esc)].join('\n'))
   await refrescarTablero(ctx, pid)
   await iniciarTurno(ctx, pid)
 }

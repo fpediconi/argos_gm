@@ -8,6 +8,8 @@ const S = (o: unknown) => JSON.stringify(o)
 
 export interface Bitacora { id: number; partida_id: number; n: number; ronda: number; jugador_id: number | null; tipo: string; texto: string; cronica: string; creada_en: number }
 export interface Votacion { id: number; partida_id: number; tipo: string; objetivo_id: number | null; msg_id: number | null; abre: number; cierra: number; resultado: string; votos: Record<string, 's' | 'e'> }
+/** Un hecho del Canon: qué pasó y quién lo sabe ('mesa' | 'dj' | 'pj:<id>'). */
+export interface Hecho { id: number; partida_id: number; turno: number; escena: number; capitulo: number; texto: string; sobre: string[]; vis: string; fuente: 'motor' | 'ia' | 'jugador'; creada_en: number }
 export interface Usuario { user_id: string; nombre: string; username: string; dm_chat_id: string | null; contexto_partida_id: number | null }
 
 export class Repos {
@@ -149,6 +151,21 @@ export class Repos {
   }
   bitacoraTodas(partida_id: number): Bitacora[] {
     return this.db.prepare('SELECT * FROM bitacora WHERE partida_id=? ORDER BY n').all(partida_id) as any
+  }
+
+  // ---------- hechos (Canon) ----------
+  agregarHecho(partida_id: number, h: { turno: number; escena: number; capitulo: number; texto: string; sobre?: string[]; vis?: string; fuente?: Hecho['fuente'] }, ahora: number): number {
+    const r = this.db.prepare(`INSERT INTO hechos(partida_id,turno,escena,capitulo,texto,sobre,vis,fuente,creada_en) VALUES(?,?,?,?,?,?,?,?,?)`)
+      .run(partida_id, h.turno, h.escena, h.capitulo, h.texto.slice(0, 300), S(h.sobre ?? []), h.vis ?? 'mesa', h.fuente ?? 'ia', ahora)
+    return Number(r.lastInsertRowid)
+  }
+  hechos(partida_id: number, f: { vis?: string[]; capitulo?: number; ultimos?: number } = {}): Hecho[] {
+    const cond: string[] = ['partida_id=?']
+    const args: (string | number)[] = [partida_id]
+    if (f.vis?.length) { cond.push(`vis IN (${f.vis.map(() => '?').join(',')})`); args.push(...f.vis) }
+    if (f.capitulo !== undefined) { cond.push('capitulo=?'); args.push(f.capitulo) }
+    const rows = this.db.prepare(`SELECT * FROM hechos WHERE ${cond.join(' AND ')} ORDER BY id DESC LIMIT ?`).all(...args, f.ultimos ?? 200) as any[]
+    return rows.reverse().map((r) => ({ ...r, sobre: J(r.sobre, []) }))
   }
 
   // ---------- tiradas ----------

@@ -39,7 +39,7 @@ export function tecladoAtributos(b: Creacion['borrador']): Teclado {
   return filas
 }
 
-export function tecladoHabilidades(ctx: Ctx, b: Creacion['borrador'], grupo: string): Teclado {
+export function tecladoHabilidades(ctx: Ctx, b: Creacion['borrador'], grupo: string, total?: number): Teclado {
   const hab = b.habilidades as Record<string, number>
   const esp = b.especialidades as string[]
   const filas: Teclado = ctx.u.habilidades
@@ -51,7 +51,7 @@ export function tecladoHabilidades(ctx: Ctx, b: Creacion['borrador'], grupo: str
       { text: esp.includes(h.id) ? '★' : '☆', callback_data: `c:hb:${h.id}:e` },
     ])
   filas.push(ctx.u.grupos.map((g) => ({ text: g.id === grupo ? `• ${g.nombre.split(' ')[0]} •` : g.nombre.split(' ')[0], callback_data: `c:hg:${g.id}` })))
-  const libres = puntosHabilidadLibres(hab, esp)
+  const libres = puntosHabilidadLibres(hab, esp, total)
   const ok = libres === 0 && esp.length === 3
   filas.push([{ text: ok ? '✅ Listo' : `Puntos: ${libres} · Especialidades: ${esp.length}/3`, callback_data: ok ? 'c:hb:ok' : noop }])
   return filas
@@ -69,14 +69,12 @@ export function tecladoArmas(ctx: Ctx, f: Partial<Ficha>): Teclado {
 }
 
 export function tecladoInfo(pid: number, conIdeas = false): Teclado {
+  // Lo que pasó, quién es quién y dónde están viven en ❓ (el resumen es su "¿Qué pasó?").
   const t: Teclado = [[
     { text: '📜 Mi ficha', callback_data: `i:${pid}:ficha` },
-    { text: '👥 Party', callback_data: `i:${pid}:party` },
-  ], [
-    { text: '📻 Resumen', callback_data: `i:${pid}:resumen` },
     { text: '🎒 Inventario', callback_data: `i:${pid}:inv` },
-  ]]
-  if (conIdeas) t.push([{ text: '💡 Ideas', callback_data: `i:${pid}:ideas` }])
+    { text: '👥 Party', callback_data: `i:${pid}:party` },
+  ], [{ text: '❓ Preguntarle al DJ', callback_data: `i:${pid}:dj` }, ...(conIdeas ? [{ text: '💡 Ideas', callback_data: `i:${pid}:ideas` }] : [])]]
   return t
 }
 
@@ -115,7 +113,7 @@ export function tecladoVoto(vid: number): Teclado {
 
 export function tecladoMejora(ctx: Ctx, capitulo: number): Teclado {
   const f: Teclado = ctx.u.grupos.map((g) => [{ text: `⬆️ Habilidad de ${g.nombre.toLowerCase()}`, callback_data: `m:g:${g.id}` }])
-  if (capitulo % 2 === 0) f.push([{ text: '⬆️ Un atributo', callback_data: 'm:a' }])
+  if (capitulo % 2 === 0) f.push([{ text: '⬆️ Un atributo', callback_data: 'm:a' }, { text: '⭐ Un Extra nuevo', callback_data: 'm:x' }])
   return f
 }
 

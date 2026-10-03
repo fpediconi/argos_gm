@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS llamadas_ia (
   usd REAL NOT NULL DEFAULT 0, ms INTEGER, ok INTEGER NOT NULL DEFAULT 1, creada_en INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_llamadas ON llamadas_ia(creada_en);
+CREATE TABLE IF NOT EXISTS hechos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  partida_id INTEGER NOT NULL, turno INTEGER NOT NULL DEFAULT 0, escena INTEGER NOT NULL DEFAULT 0, capitulo INTEGER NOT NULL DEFAULT 1,
+  texto TEXT NOT NULL, sobre TEXT NOT NULL DEFAULT '[]', vis TEXT NOT NULL DEFAULT 'mesa', fuente TEXT NOT NULL DEFAULT 'ia', creada_en INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_hechos ON hechos(partida_id, id);
 `
 
 export function abrirDb(ruta: string): DatabaseSync {

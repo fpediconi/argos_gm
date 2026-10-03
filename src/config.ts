@@ -19,10 +19,16 @@ export interface Config {
   adminId: string
   openaiKey: string
   openaiBase: string
+  /** 'chat' (/chat/completions, por defecto) o 'responses' (/responses: razonamiento junto con herramientas). */
+  api?: 'chat' | 'responses'
+  /** Auditor de coherencia narración ↔ estado: 'auto' (con prefiltro), 'siempre' o 'nunca'. */
+  auditor?: 'auto' | 'siempre' | 'nunca'
   modelos: { narrador: string; util: string; guionista: string }
   precios: { narrador: Precio; util: Precio; guionista: Precio }
   reasoningEffort: string
   reasoningEffortTools: string
+  /** Razonamiento del narrador cuando usa herramientas (solo con /responses). */
+  reasoningNarrador?: string
   maxSalidaNarrador: number
   presupuestoPartidaUsd: number
   presupuestoGlobalUsd: number
@@ -42,6 +48,8 @@ export function cargarConfig(): Config {
     adminId: env('TELEGRAM_ADMIN_ID'),
     openaiKey: env('OPENAI_API_KEY'),
     openaiBase: env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+    api: env('OPENAI_API', 'responses') === 'chat' ? 'chat' : 'responses',
+    auditor: (['auto', 'siempre', 'nunca'].includes(env('AUDITOR', 'auto')) ? env('AUDITOR', 'auto') : 'auto') as Config['auditor'],
     modelos: {
       narrador: env('MODELO_NARRADOR', 'gpt-5.4-mini'),
       util: env('MODELO_UTIL', 'gpt-5.4-nano'),
@@ -55,6 +63,7 @@ export function cargarConfig(): Config {
     },
     reasoningEffort: env('OPENAI_REASONING_EFFORT', 'low'),
     reasoningEffortTools: env('OPENAI_REASONING_EFFORT_TOOLS', 'none'),
+    reasoningNarrador: env('OPENAI_REASONING_NARRADOR', 'low'),
     maxSalidaNarrador: num('MAX_SALIDA_NARRADOR', 1500),
     presupuestoPartidaUsd: num('PRESUPUESTO_PARTIDA_USD', 0.5),
     presupuestoGlobalUsd: num('PRESUPUESTO_GLOBAL_USD', 2),

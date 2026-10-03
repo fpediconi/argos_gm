@@ -3,6 +3,8 @@ import type { ConfigPartida, Partida } from '../motor/tipos.js'
 import type { TgMessage, Teclado } from '../telegram/api.js'
 import { ErrorPresupuesto, crearMundo, decidirTurno, generarPremisas } from '../dj/servicios.js'
 import { aplicarCambios } from '../motor/estado.js'
+import { cortarEscena, marcarApariciones } from '../motor/canon.js'
+import { migrarCanon, registrarHecho } from './narrativa.js'
 import { vencimiento } from '../motor/turnos.js'
 import { DURACIONES, recalcularObjetivo, ritmoDe, ritmoNuevo, totalCapitulos } from '../motor/ritmo.js'
 import { esc, recortar, textoIA } from '../util.js'
@@ -231,7 +233,7 @@ async function terminarWizard(ctx: Ctx, partida: Partida): Promise<void> {
     esc(DURACIONES[cfg.duracion]?.nombre ?? ''), textoPlazo(cfg.plazoH), `letalidad ${cfg.letalidad}`,
   ].join(' · ')
   await ctx.api.editar(partida.chat_id, partida.wizard_msg_id!, `✅ <b>Historia configurada</b>\n${linea}${cfg.premisa ? `\n🎯 ${esc(cfg.premisa)}` : ''}\n\nEl anfitrión puede cambiar esto después con /config.`, [])
-  await aGrupo(ctx, partida, `🧑‍🚀 <b>Ahora, a crear los personajes.</b>\nCada uno toca el botón: se abre mi chat privado y armamos la ficha en unos minutos. Cuando estén todos listos, el anfitrión toca <b>▶️ Empezar</b> en el tablero.`, { teclado: [[{ text: '🧑‍🚀 Crear mi personaje', url: urlUnirse(ctx, partida.id) }]] })
+  await aGrupo(ctx, partida, `🧑‍🚀 <b>Ahora, a crear los personajes.</b>\nCada uno toca el botón y se abre mi chat privado. Dos formas:\n⚡ <b>Rápido</b>: 4 toques y una ficha completa que después editás.\n🎙️ <b>Guiado</b>: me contás quién querés jugar (texto o audio) y lo armo yo.\nCuando estén todos listos, el anfitrión toca <b>▶️ Empezar</b> en el tablero.`, { teclado: [[{ text: '🧑‍🚀 Crear mi personaje', url: urlUnirse(ctx, partida.id) }]] })
   await refrescarTablero(ctx, partida.id)
 }
 
@@ -342,6 +344,8 @@ export async function empezarPartida(ctx: Ctx, pid: number, userId: string): Pro
   // La premisa es el objetivo del grupo: queda fija toda la partida.
   partida.mundo.misiones.push({ id: 'principal', texto: recortar(partida.config.premisa || g.premisa, 120), estado: 'activa', principal: true })
   partida.mundo.ritmo = ritmoNuevo(partida.config, listos.length)
+  // El Canon nace del guion: NPC, facciones y lugares con sus agendas; el hilo principal; un arco por personaje.
+  migrarCanon(ctx, partida, pjs)
   partida.estado = 'EN_JUEGO'
   partida.capitulo = 1
   partida.ronda = 0
@@ -354,12 +358,16 @@ export async function empezarPartida(ctx: Ctx, pid: number, userId: string): Pro
 
   const jugadoresAct = ctx.db.jugadores(pid)
   const pjsAct = ctx.db.personajesVivos(pid)
-  const usuario = 'APERTURA DE LA AVENTURA. Narrá la escena inicial (máximo 180 palabras) que reúna a los personajes en la acción usando el gancho del guion y deje claro el OBJETIVO PRINCIPAL. Arrancá con algo que ya está pasando. Definí en "cambios" la ubicación inicial y los NPC que aparezcan (el objetivo principal ya existe como misión "principal"). Devolvé "vinculos": un vínculo de una línea entre cada par de personajes.'
+  const usuario = 'APERTURA DE LA AVENTURA. Narrá la escena inicial (máximo 180 palabras) que reúna a los personajes en la acción usando el gancho del guion y deje claro el OBJETIVO PRINCIPAL. Arrancá con algo que ya está pasando. Definí la primera escena con "escena" (lugar, pregunta dramática y los NPC presentes: como mucho dos, y el antagonista NO). En "cambios" poné los NPC que aparecen (el objetivo principal ya existe como misión "principal"). Devolvé "vinculos": un vínculo de una línea entre cada par de personajes, y "hechos" con lo que pasó.'
   try {
     const d = await decidirTurno(ctx, partida, pjsAct, jugadoresAct, { tarea: 'apertura', usuario, forzarNarrar: true, rol: 'guionista', maxSalida: 3000 })
     if (d.tipo !== 'narrar') throw new Error('apertura sin narración')
     const s = d.salida
-    aplicarCambios(ctx.u, partida.mundo, pjsAct, s.cambios, { enCombate: false })
+    if (s.escena) cortarEscena(partida.mundo, s.escena, partida.turno_n)
+    aplicarCambios(ctx.u, partida.mundo, pjsAct, s.cambios, { enCombate: false, turno: partida.turno_n })
+    marcarApariciones(partida.mundo, s.narracion, partida.turno_n)
+    if (s.libreta) partida.mundo.narrativa!.libreta = s.libreta
+    for (const h of s.hechos ?? []) registrarHecho(ctx, partida, h, { fuente: 'ia' })
     if (s.vinculos?.length) partida.mundo.vinculos = s.vinculos
     ctx.db.guardarPartida(partida)
     registrar(ctx, partida, null, 'narracion', s.narracion, s.cronica || 'Comienza la aventura.')

@@ -167,7 +167,7 @@ export function sortearEvento(d: DatosEvento, rng: Rng, fase: Fase): Evento {
       const presentes = d.npcs.filter((n) => d.npcsPresentes.some((p) => p.toLowerCase() === n.nombre.toLowerCase()))
       const n = elegir(presentes.length ? presentes : d.npcs.filter((x) => x.nombre), rng)
       const secreto = n.secreto ? ` según su secreto ("${n.secreto}")` : ''
-      return { tipo, avanzaAmenaza: 0, instruccion: `GIRO DE NPC: ${n.nombre} actúa${secreto}: traiciona, huye con algo o revela su verdadera cara. Mostralo en acción, con consecuencias.` }
+      return { tipo, avanzaAmenaza: 0, instruccion: `GIRO DE NPC: ${n.nombre} actúa${secreto}: traiciona, huye con algo o revela su verdadera cara. Mostralo en acción, con consecuencias (si no está en escena, lo que hizo llega a la escena).` }
     }
     case 'descubrimiento': {
       const s = d.secretos[Math.min(d.secretosRevelados, d.secretos.length - 1)]
@@ -181,7 +181,7 @@ export function sortearEvento(d: DatosEvento, rng: Rng, fase: Fase): Evento {
     }
     case 'amenaza':
     default:
-      return { tipo: 'amenaza', avanzaAmenaza: 2, instruccion: `GOLPE DE LA AMENAZA: ${d.amenaza} golpea de forma visible y directa en esta escena (daño, destrucción, víctimas). El reloj de la amenaza avanza 2.` }
+      return { tipo: 'amenaza', avanzaAmenaza: 2, instruccion: `LA AMENAZA AVANZA: ${d.amenaza} deja una consecuencia concreta a la vista del grupo (algo destruido, alguien que no llegó, un recurso que se pierde). Se muestra la CONSECUENCIA, no al villano hablando: nada de discursos, radios ni altavoces.` }
   }
 }
 

@@ -10,6 +10,8 @@ export class FakeApi implements ApiTelegram {
   encuestas: { chatId: string; id: number; pollId: string; pregunta: string; opciones: string[]; cerrada: boolean }[] = []
   audios = new Map<string, Uint8Array>()
   callbacks: { id: string; texto?: string }[] = []
+  /** Registro en orden de todo lo que el bot hizo (para revisar la experiencia como transcripción). */
+  eventos: { tipo: 'envía' | 'edita' | 'aviso' | 'encuesta' | 'documento'; chatId: string; id?: number; html: string; teclado?: Teclado }[] = []
   private n = 1000
   yo: TgUser = { id: 999, first_name: 'Argos DJ', username: 'argos_dj_bot', is_bot: true }
   async getMe() { return this.yo }
@@ -17,6 +19,7 @@ export class FakeApi implements ApiTelegram {
   async enviar(chatId: string, html: string, op: OpcionesEnvio = {}) {
     const id = ++this.n
     this.msgs.push({ chatId, id, html, teclado: op.teclado, responderA: op.responderA, editado: 0, borradoTeclado: false })
+    this.eventos.push({ tipo: 'envía', chatId, id, html, teclado: op.teclado })
     return id
   }
   async editar(chatId: string, messageId: number, html: string, teclado?: Teclado | null) {
@@ -24,12 +27,16 @@ export class FakeApi implements ApiTelegram {
     if (!m) return
     m.html = html; m.editado++
     if (teclado !== undefined) m.teclado = teclado ?? undefined
+    this.eventos.push({ tipo: 'edita', chatId, id: messageId, html, teclado: m.teclado })
   }
   async quitarTeclado(chatId: string, messageId: number) {
     const m = this.msgs.find((x) => x.chatId === chatId && x.id === messageId)
     if (m) { m.teclado = undefined; m.borradoTeclado = true }
   }
-  async responderCallback(id: string, texto?: string) { this.callbacks.push({ id, texto }) }
+  async responderCallback(id: string, texto?: string) {
+    this.callbacks.push({ id, texto })
+    if (texto) this.eventos.push({ tipo: 'aviso', chatId: '-', html: texto })
+  }
   async fijar(_c: string, messageId: number) { this.fijados.push(messageId); return true }
   async desfijar(_c: string, messageId: number) { this.fijados = this.fijados.filter((x) => x !== messageId) }
   async desfijarTodos() { this.fijados = [] }
@@ -40,11 +47,15 @@ export class FakeApi implements ApiTelegram {
     const pollId = `poll${id}`
     this.encuestas.push({ chatId, id, pollId, pregunta, opciones, cerrada: false })
     this.msgs.push({ chatId, id, html: `📊 ${pregunta}`, editado: 0, borradoTeclado: false })
+    this.eventos.push({ tipo: 'encuesta', chatId, id, html: `📊 ${pregunta} — ${opciones.join(' / ')}` })
     return { messageId: id, pollId }
   }
   async cerrarEncuesta(_c: string, messageId: number) { const e = this.encuestas.find((x) => x.id === messageId); if (e) e.cerrada = true }
   async descargar(fileId: string) { return { datos: this.audios.get(fileId) ?? new Uint8Array([1, 2, 3]), ruta: `voice/${fileId}.oga` } }
-  async documento(chatId: string, nombre: string, contenido: string) { this.docs.push({ chatId, nombre, contenido }) }
+  async documento(chatId: string, nombre: string, contenido: string) {
+    this.docs.push({ chatId, nombre, contenido })
+    this.eventos.push({ tipo: 'documento', chatId, html: `📎 ${nombre}` })
+  }
   async escribiendo() {}
   async setComandos() {}
   async quitarWebhook() {}

@@ -1,5 +1,6 @@
 import type { AtribId, Ficha, PedidoTirada, Personaje, TiradaResuelta, Universo } from './tipos.js'
 import { contarExitos, tirarDados, type Rng } from './dados.js'
+import { bono, bonoDanio } from './personaje.js'
 
 export const DADOS_BASE = 2
 export const DADOS_MAX = 3
@@ -32,13 +33,13 @@ export function resolverPrueba(p: Personaje, pedido: PedidoTirada, extra: Extra,
   }
 }
 
-export function defensaDe(p: Personaje): number {
+export function defensaDe(p: Personaje, u?: Universo): number {
   const base = (p.ficha.atributos.AGI ?? 0) >= 9 ? 2 : 1
-  return base + (p.cubierto ? 1 : 0)
+  return Math.max(1, base + (u ? bono(u, p.ficha, 'defensa') : 0)) + (p.cubierto ? 1 : 0)
 }
 
-export function cargaMax(ficha: Ficha): number {
-  return 6 + Math.floor((ficha.atributos.FUE ?? 0) / 2)
+export function cargaMax(ficha: Ficha, u?: Universo): number {
+  return 6 + Math.floor((ficha.atributos.FUE ?? 0) / 2) + (u ? bono(u, ficha, 'carga') : 0)
 }
 
 export function proteccionDe(p: Personaje, u: Universo): number {
@@ -47,7 +48,12 @@ export function proteccionDe(p: Personaje, u: Universo): number {
     const o = u.objetos.find((x) => x.id === it.id)
     if (o?.efecto === 'armadura') mejor = Math.max(mejor, o.valor)
   }
-  return mejor
+  return Math.max(0, mejor + bono(u, p.ficha, 'prot'))
+}
+
+/** Daño del arma principal con los extras y rasgos del personaje. */
+export function danioArma(p: Personaje, u: Universo, arma = armaPrincipal(p, u)): number {
+  return Math.max(1, arma.danio + bonoDanio(u, p.ficha, arma.habilidad))
 }
 
 export function armaPrincipal(p: Personaje, u: Universo) {

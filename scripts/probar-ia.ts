@@ -12,8 +12,9 @@ let total = 0
 const cerebro = new CerebroOpenAI(cfg, herramientasDe(u), ({ rol, modelo, uso, ok }) => {
   const usd = costo(uso, cfg.precios[rol])
   total += usd
-  console.log(`   · ${rol} (${modelo}) ${ok ? 'ok' : 'ERROR'} — ${uso.tok_in} in / ${uso.tok_out} out — ~US$ ${usd.toFixed(5)} — ${uso.ms} ms`)
-})
+  console.log(`   · ${rol} (${modelo}) ${ok ? 'ok' : 'ERROR'} — ${uso.tok_in} in / ${uso.tok_out} out${uso.tok_razon ? ` (${uso.tok_razon} de razonamiento)` : ''} — ~US$ ${usd.toFixed(5)} — ${uso.ms} ms`)
+}, (...a) => console.log('  ', ...a))
+console.log(`API: ${cfg.api === 'responses' ? '/responses' : '/chat/completions'} · razonamiento del narrador con herramientas: ${cerebro.esfuerzo(true) || 'ninguno'} · en el resto: ${cerebro.esfuerzo(false) || 'ninguno'}\n`)
 
 async function paso(nombre: string, fn: () => Promise<string>) {
   process.stdout.write(`▶ ${nombre}\n`)
@@ -31,5 +32,14 @@ await paso('Modelo NARRADOR (herramienta narrar)', async () => {
   if (d.tipo !== 'narrar') throw new Error('devolvió una tirada en vez de narrar')
   return d.salida.narracion
 })
+await paso('Modelo NARRADOR (elige entre tirar o narrar, razonando)', async () => {
+  const d = await cerebro.decidir({
+    tarea: 'prueba', rol: 'narrador', partidaId: null, forzarNarrar: false, maxSalida: cfg.maxSalidaNarrador,
+    sistema: 'Sos el Director de Juego de una partida de Fallout. Si la acción tiene riesgo real, usá pedir_tirada; si no, narrar.',
+    usuario: 'Jugador Nico (P2): "Salto del techo al camión en movimiento".',
+  })
+  return d.tipo === 'tirada' ? `pidió tirada: ${d.pedido.habilidad} dificultad ${d.pedido.dificultad}` : `narró: ${d.salida.narracion}`
+})
 await paso('Modelo GUIONISTA (JSON)', () => cerebro.texto({ tarea: 'prueba', rol: 'guionista', partidaId: null, sistema: 'Devolvé solo JSON válido.', usuario: 'Devolvé {"ok":true,"idea":"una idea de aventura en una frase"}', maxSalida: 300, json: true }))
-console.log(`\nGasto total de la prueba: ~US$ ${total.toFixed(5)}`)
+console.log(`\nQuedó hablando por: ${cerebro.modoActivo()}`)
+console.log(`Gasto total de la prueba: ~US$ ${total.toFixed(5)}`)

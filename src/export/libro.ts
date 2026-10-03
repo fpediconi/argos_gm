@@ -14,7 +14,19 @@ export function exportarLibro(ctx: Ctx, partida: Partida): string {
   l.push('## Personajes', '')
   for (const p of pjs) {
     const j = jugadores.find((x) => x.id === p.jugador_id)
-    l.push(`- **${p.ficha.nombre}** (${j?.nombre ?? '?'}) — ${p.vivo ? 'vivo' : 'murió'}. ${p.trasfondo}`)
+    const f = p.ficha
+    const o = ctx.u.origenes.find((x) => x.id === f.origen)
+    const sub = o?.sub?.find((x) => x.id === f.subOrigen)
+    const estado = p.vivo ? 'vivo' : p.condiciones.includes('se fue') ? 'se fue' : 'murió'
+    l.push(`- **${f.nombre}** (${j?.nombre ?? '?'}) — ${o?.nombre ?? f.origen}${sub ? `, ${sub.nombre.toLowerCase()}` : ''}. ${estado}. ${f.bio ?? p.trasfondo}`)
+    if (f.objetivo) l.push(`  - Quería: ${f.objetivo}`)
+    // El secreto solo entra al libro si se supo en la historia.
+    if (f.secreto && f.secretoEstado === 'revelado') l.push(`  - Su secreto: ${f.secreto}`)
+    if (f.cicatrices?.length) l.push(`  - Cicatrices: ${f.cicatrices.join(', ')}`)
+  }
+  if (partida.mundo.capitulos?.length) {
+    l.push('', '## En resumen', '')
+    partida.mundo.capitulos.forEach((c, i) => l.push(`**Capítulo ${i + 1}.** ${c}`, ''))
   }
   l.push('', '## La historia', '')
   let capitulo = 1

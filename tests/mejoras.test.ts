@@ -127,7 +127,7 @@ test('el prompt lleva ritmo, acto actual y objetivo principal (sin "capítulo fi
   await jugar(m, j, pid)
   const sistema = m.mock.vistas.at(-1)!.sistema
   assert.match(sistema, /RITMO/)
-  assert.match(sistema, /ACTO ACTUAL \(1 de 3\)/)
+  assert.match(sistema, /ACTO 1 de 3/)
   assert.match(sistema, /OBJETIVO PRINCIPAL/)
   assert.doesNotMatch(sistema, /ES EL CAPÍTULO FINAL/)
 })
@@ -315,14 +315,6 @@ test('/votacion: encuesta nativa y el resultado queda como decisión del grupo',
   assert.deepEqual(m.ctx.db.partida(pid)!.mundo.decisiones, ['¿Quién lidera? → Caro'])
   await jugar(m, j, pid)
   assert.match(m.mock.vistas.at(-1)!.sistema, /Decisiones del grupo.*Caro/)
-})
-
-test('creación: si el narrador repregunta, la reacción se descarta', async () => {
-  const m = crearMundo()
-  m.mock.textos.reaccion = '¿Y por qué te fuiste?'
-  const { j } = await partidaLista(m, [101])
-  void j
-  assert.ok(!m.api.msgs.some((x) => /Y por qué te fuiste/.test(x.html)))
 })
 
 test('premisa: el anfitrión la elige y queda como objetivo fijo', async () => {

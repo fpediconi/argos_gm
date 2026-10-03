@@ -12,11 +12,13 @@ import { cmdCerrarVotacion, iniciarVotacion, votoEncuesta } from '../juego/decis
 import * as info from '../juego/info.js'
 import { aGrupo, botonGrupo, botonPrivado, cargar, fijarSolo, urlUnirse } from '../juego/comun.js'
 import { estadoPresupuesto } from '../dj/presupuesto.js'
+import { callbackLegado } from '../juego/narrativa.js'
 import { fichaTexto, inventarioTexto } from './textos.js'
 
 export const COMANDOS = [
   { command: 'nueva', description: 'Crear una partida en este grupo' },
   { command: 'a', description: 'Actuar en tu turno: /a lo que hacés' },
+  { command: 'dj', description: 'Preguntarle al DJ (quién es quién, qué pasó…)' },
   { command: 'ficha', description: 'Ver tu personaje' },
   { command: 'party', description: 'Ver a los personajes de la party' },
   { command: 'inventario', description: 'Ver tu mochila' },
@@ -35,6 +37,7 @@ export const COMANDOS = [
   { command: 'final', description: 'Cerrar la historia en N turnos (anfitrión)' },
   { command: 'limpiar_fijados', description: 'Dejar fijados solo tablero y turno (anfitrión)' },
   { command: 'costo', description: 'Gasto de IA (anfitrión)' },
+  { command: 'fe_de_erratas', description: 'Corregir un hecho de la historia (anfitrión)' },
   { command: 'ayuda', description: 'Cómo se juega' },
 ]
 
@@ -180,7 +183,21 @@ async function mensaje(ctx: Ctx, msgOriginal: TgMessage): Promise<void> {
   if (msg.text.startsWith('/')) return // comando para otro bot
   if (privado) {
     const usado = await textoCreacion(ctx, msg.from!, msg.text)
-    if (!usado) await ctx.api.enviar(String(msg.chat.id), 'Para jugar, andá al grupo y respondé a la tarjeta de tu turno. Usá /ayuda para ver los comandos.', { teclado: tecladoVolver(ctx, userId) })
+    if (usado) return
+    // Por privado, lo que no es creación de personaje es una pregunta al DJ (si la partida está en juego).
+    const pc = contextoDe(ctx, userId)
+    const jj = pc ? ctx.db.jugadorDeUsuario(pc.id, userId) : undefined
+    if (pc && jj?.creacion) {
+      await ctx.api.enviar(String(msg.chat.id), '🧑‍🚀 Estás armando tu personaje: usá los botones del último mensaje (o ✍️ para escribir un campo).')
+      return
+    }
+    if (pc && jj && (pc.estado === 'EN_JUEGO' || pc.estado === 'PAUSADA')) {
+      const chat = String(msg.chat.id)
+      const texto = msg.text
+      await ctx.colas.correr(`p${pc.id}`, () => info.cmdDj(ctx, ctx.db.partida(pc.id)!, jj, texto, async (html, teclado) => { await ctx.api.enviar(chat, html, { teclado: teclado ?? tecladoVolver(ctx, userId) }) }))
+      return
+    }
+    await ctx.api.enviar(String(msg.chat.id), 'Para jugar, andá al grupo y respondé a la tarjeta de tu turno. Usá /ayuda para ver los comandos.', { teclado: tecladoVolver(ctx, userId) })
     return
   }
   // Grupo: solo se procesa la respuesta a un mensaje del bot.
@@ -231,7 +248,8 @@ async function comando(ctx: Ctx, msg: TgMessage, cmd: string, args: string, priv
   if (cmd === 'estado' && userId === ctx.cfg.adminId) {
     const pres = estadoPresupuesto(ctx, null)
     const n = ctx.db.partidasNoFinalizadas().length
-    return resp(`🛠️ Partidas abiertas: ${n} · gasto hoy US$ ${pres.gastoGlobal.toFixed(3)} / ${pres.topeGlobal} · fusible: ${pres.nivel}`)
+    const api = 'modoActivo' in ctx.cerebro ? ` · OpenAI: ${(ctx.cerebro as { modoActivo(): string }).modoActivo()}` : ''
+    return resp(`🛠️ Partidas abiertas: ${n} · gasto hoy US$ ${pres.gastoGlobal.toFixed(3)} / ${pres.topeGlobal} · fusible: ${pres.nivel}${api}`)
   }
   if (cmd === 'mis_partidas' && privado) {
     const ps = ctx.db.partidasDeUsuario(userId)
@@ -274,12 +292,14 @@ async function comando(ctx: Ctx, msg: TgMessage, cmd: string, args: string, priv
         if (!args) return resp('Contame qué hace tu personaje: <code>/a abro la puerta con cuidado</code>')
         return procesarAccion(ctx, pid, userId, args, privado ? undefined : msg.message_id)
       case 'tirar': return resp('Cuando haya una prueba pendiente, tocá el botón 🎲 Tirar en el mensaje del DJ.')
-      case 'ficha': return info.cmdFicha(ctx, p, j, resp)
+      case 'ficha': return info.cmdFicha(ctx, p, j, resp, privado)
       case 'party': case 'grupo': return info.cmdParty(ctx, p, j, resp)
       case 'inventario': case 'inv': return info.cmdInventario(ctx, p, j, resp)
       case 'donde': return info.cmdDonde(ctx, p, j, resp)
       case 'misiones': return info.cmdMisiones(ctx, p, j, resp)
       case 'resumen': return info.cmdResumen(ctx, p, j, resp)
+      case 'dj': case 'preguntar': return info.cmdDj(ctx, p, j, args, resp)
+      case 'fe_de_erratas': case 'corregir': return info.cmdFeDeErratas(ctx, p, j, args, resp)
       case 'radio': return info.cmdRadio(ctx, p, j, resp, false)
       case 'previamente': return info.cmdRadio(ctx, p, j, resp, true)
       case 'tiradas': return info.cmdTiradas(ctx, p, j, resp)
@@ -321,6 +341,14 @@ async function comando(ctx: Ctx, msg: TgMessage, cmd: string, args: string, priv
 
 async function start(ctx: Ctx, msg: TgMessage, payload: string, resp: (h: string, t?: Teclado) => Promise<void>): Promise<void> {
   if (msg.chat.type !== 'private') return resp('Escribime por privado para crear tu personaje.', botonPrivado(ctx))
+  const dj = /^dj_(\d+)$/.exec(payload)
+  if (dj) {
+    const p = ctx.db.partida(Number(dj[1]))
+    if (p && ctx.db.jugadorDeUsuario(p.id, String(msg.from!.id))) {
+      ctx.db.setContexto(String(msg.from!.id), p.id)
+      return resp(info.TEXTO_MENU_DJ, info.tecladoDj(p.id))
+    }
+  }
   const m = /^u_(\d+)$/.exec(payload)
   if (m) {
     const pid = Number(m[1])
@@ -354,7 +382,7 @@ async function callback(ctx: Ctx, cb: TgCallback): Promise<void> {
     const num = (s: string | undefined) => (s === undefined ? NaN : Number(s))
     switch (t) {
       case 'x': return fin()
-      case 'w': case 'b': case 'r': case 'a': case 't': case 'o': case 'l': case 'n': case 'i': case 'g': case 'd': pid = num(r[0]); break
+      case 'w': case 'b': case 'r': case 'a': case 't': case 'o': case 'l': case 'n': case 'i': case 'g': case 'd': case 'j': case 'u': pid = num(r[0]); break
       case 'v': pid = ctx.db.votacion(num(r[0]))?.partida_id; break
       case 'c': case 'm': pid = contextoDe(ctx, userId)?.id; break
       case 'k': {
@@ -393,6 +421,8 @@ async function callback(ctx: Ctx, cb: TgCallback): Promise<void> {
         case 'c': return callbackCreacion(ctx, cb.from, msgId, ['c', ...r])
         case 'm': return callbackMejora(ctx, cb.from, msgId, ['m', ...r])
         case 'i': return botonInfo(ctx, P, userId, r[1])
+        case 'j': return botonInfo(ctx, P, userId, `dj_${r[1]}`)
+        case 'u': return callbackLegado(ctx, P, userId, num(r[1]), r[2], r[3], msgId)
       }
     })
     fin(res)
@@ -433,13 +463,23 @@ async function botonInfo(ctx: Ctx, pid: number, userId: string, que: string): Pr
     }
     await ctx.api.enviar(p.chat_id, html, { threadId: p.thread_id })
   }
+  const respConTeclado = async (html: string, teclado: Teclado) => {
+    if (dm) {
+      try { await ctx.api.enviar(dm, html, { teclado }); return } catch { enPrivado = false }
+    }
+    await ctx.api.enviar(p.chat_id, html, { threadId: p.thread_id, teclado })
+  }
   if (!dm) await ctx.api.enviar(p.chat_id, '💡 Tip: escribime por privado y estas consultas te llegan ahí sin llenar el grupo.', { threadId: p.thread_id, teclado: botonPrivado(ctx) })
   switch (que) {
-    case 'ficha': { const pj = ctx.db.ultimoPersonajeDe(j.id); await resp(pj ? fichaTexto(ctx, pj) : 'Sin personaje.'); break }
+    case 'ficha': { const pj = ctx.db.ultimoPersonajeDe(j.id); await resp(pj ? fichaTexto(ctx, pj, !!dm) : 'Sin personaje.'); break }
     case 'inv': { const pj = ctx.db.personajeVivoDe(j.id); await resp(pj ? inventarioTexto(ctx, pj) : 'Sin personaje.'); break }
     case 'party': await resp(partyTexto(ctx, pjs, jugadores)); break
     case 'donde': case 'resumen': await info.cmdResumen(ctx, p, j, resp); break
-    default: return
+    case 'dj': await respConTeclado(info.TEXTO_MENU_DJ, info.tecladoDj(pid)); break
+    default:
+      if (que === 'dj_paso') { await info.cmdResumen(ctx, p, j, resp); break }
+      if (que.startsWith('dj_')) { await resp(info.respuestaDj(ctx, p, j, que.slice(3))); break }
+      return
   }
   return enPrivado ? '📩 Te lo mandé por privado (chat con el bot).' : undefined
 }

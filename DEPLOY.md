@@ -49,6 +49,13 @@ El bot usa tres "roles" y cada uno se configura en el `.env`:
 2. Ajustá `MODELO_*` y `PRECIO_*` en el `.env` (los precios solo alimentan `/costo` y el fusible; si están mal, el bot calcula mal el gasto, pero funciona).
 3. Corré la prueba de conexión (paso 5.4). Te dice si la key y los tres modelos andan, y cuánto costó la prueba (centavos).
 
+**Razonamiento (Responses API).** Por defecto el bot habla con OpenAI por `/responses` (`OPENAI_API=responses`), que deja que el
+narrador **piense antes de narrar** aunque use herramientas (por `/chat/completions`, los gpt-5.4 o más nuevos no aceptan
+herramientas y razonamiento juntos). El nivel se elige con `OPENAI_REASONING_NARRADOR` (`low` por defecto; `medium` da mejor hilo
+narrativo pero tarda y cuesta más, porque los tokens de razonamiento se cobran como salida). Si `/responses` no anda con tu cuenta
+o modelo, el bot cae solo a `/chat/completions` y lo deja en el log. `npm run probar-ia` te dice por dónde quedó hablando y cuántos
+tokens de razonamiento usó; `/estado` también lo muestra.
+
 Orden de magnitud: con un modelo de gama media, un turno cuesta del orden de **US$ 0,005–0,01**. Una aventura de 4 jugadores × 20 rondas ronda US$ 0,5–1. El bot ordena el prompt para aprovechar el caché de OpenAI y limita las salidas para gastar poco.
 
 ## 4. Subir el proyecto al VPS
@@ -229,7 +236,12 @@ docker compose down                       # apagar (el volumen con las partidas 
 
 Si el contenedor se reinicia en medio de un turno, el bot lo detecta al arrancar y pone un botón **🔄 Reintentar** en el grupo; la acción del jugador no se pierde.
 
-`/estado` (solo vos, el admin) muestra partidas abiertas y gasto del día.
+`/estado` (solo vos, el admin) muestra partidas abiertas, gasto del día y si OpenAI está yendo por `/responses` o `/chat/completions`.
+
+**Después de actualizar a la versión de narrativa (octubre 2026):** sumá al `.env` del VPS (o copiá las líneas de `.env.example`):
+`OPENAI_API=responses`, `OPENAI_REASONING_NARRADOR=low` y `AUDITOR=auto`. Si no las ponés, esos son igual los valores por defecto.
+Antes de jugar con amigos: `docker compose exec argos-dj npm run probar-ia` y `docker compose exec argos-dj npm run probar-coherencia`
+(una partida de 20 turnos con IA real, centavos). Las partidas en curso se migran solas.
 
 ## 10. Problemas comunes
 

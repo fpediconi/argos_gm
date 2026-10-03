@@ -2,11 +2,12 @@ import type { Ctx } from '../ctx.js'
 import type { Jugador, Partida, Personaje } from '../motor/tipos.js'
 import { ATRIBUTOS } from '../motor/tipos.js'
 import { barraVida, esc, fechaCorta, formatoDuracion } from '../util.js'
-import { saludMaxEfectiva } from '../motor/personaje.js'
-import { armaPrincipal, cargaMax, defensaDe, proteccionDe, probabilidadExito, semaforo, textoDificultad } from '../motor/reglas.js'
+import { saludMaxEfectiva, suerteMax } from '../motor/personaje.js'
+import { armaPrincipal, cargaMax, danioArma, defensaDe, proteccionDe, probabilidadExito, semaforo, textoDificultad } from '../motor/reglas.js'
 import type { TiradaResuelta } from '../motor/tipos.js'
 import { DURACIONES, FASES, faseDe, limite, totalCapitulos } from '../motor/ritmo.js'
 import { cantidadItems } from '../motor/personaje.js'
+import { presentes } from '../motor/canon.js'
 import { SIN_LIMITE } from '../motor/turnos.js'
 
 export const mencion = (j: Pick<Jugador, 'user_id' | 'nombre'>) => `<a href="tg://user?id=${j.user_id}">${esc(j.nombre)}</a>`
@@ -15,7 +16,8 @@ export function barra(llenos: number, total: number): string {
   return '▰'.repeat(Math.max(0, llenos)) + '▱'.repeat(Math.max(0, total - llenos))
 }
 
-export function fichaTexto(ctx: Ctx, p: Personaje): string {
+/** Ficha del personaje. Con `privado`, incluye su secreto y su mentira (solo para el chat privado de su jugador). */
+export function fichaTexto(ctx: Ctx, p: Personaje, privado = false): string {
   const f = p.ficha
   const u = ctx.u
   const o = u.origenes.find((x) => x.id === f.origen)
@@ -32,14 +34,23 @@ export function fichaTexto(ctx: Ctx, p: Personaje): string {
   if (f.aspecto) l.push(esc(f.aspecto))
   l.push('')
   l.push(attrs)
-  l.push(`❤️ Salud ${p.salud}/${saludMaxEfectiva(p)} · ☢️ Rads ${p.rads} · 🍀 Suerte ${p.suerte}/${f.atributos.SUE} · 🔩 Chapas ${p.chapas} · 🛡️ Def ${defensaDe(p)} · Prot ${proteccionDe(p, u)}`)
+  l.push(`❤️ Salud ${p.salud}/${saludMaxEfectiva(p)} · ☢️ Rads ${p.rads} · 🍀 Suerte ${p.suerte}/${suerteMax(u, p)} · 🔩 Chapas ${p.chapas} · 🛡️ Def ${defensaDe(p, u)} · Prot ${proteccionDe(p, u)}`)
   if (p.condiciones.length) l.push(`⚠️ ${esc(p.condiciones.join(', '))}`)
   l.push('')
   l.push(habs || '(sin habilidades)')
   l.push('')
-  l.push(`🔫 Arma: ${esc(arma.nombre)} (daño ${arma.danio})`)
+  l.push(`🔫 Arma: ${esc(arma.nombre)} (daño ${danioArma(p, u, arma)})${f.arma2 ? ` · ${esc(u.armas.find((a) => a.id === f.arma2)?.nombre ?? '')}` : ''}`)
+  const ex = [...(f.extras ?? []).map((id) => u.extras?.find((x) => x.id === id)?.nombre), ...(f.rasgos ?? []).map((id) => u.rasgos?.find((x) => x.id === id)?.nombre)].filter(Boolean)
+  if (ex.length) l.push(`⭐ ${esc(ex.join(' · '))}`)
+  if (f.cicatrices?.length) l.push(`🩹 Cicatrices: ${esc(f.cicatrices.join(' · '))}`)
+  // Lo que lo mueve (sin el secreto ni la mentira: /ficha puede verse en el grupo).
+  const quien = [f.virtudes?.length ? f.virtudes.join(', ') : '', f.defecto ? `defecto: ${f.defecto}` : '', f.valor ? `valora: ${f.valor}` : ''].filter(Boolean)
+  if (quien.length) l.push(`🎭 ${esc(quien.join(' · '))}`)
+  if (f.objetivo) l.push(`🧩 Quiere: ${esc(f.objetivo)}${f.miedo ? ` · Teme: ${esc(f.miedo)}` : ''}`)
   if (p.gancho) l.push(`🎯 Gancho: ${esc(p.gancho)}`)
   if (p.trasfondo) l.push(`📖 ${esc(p.trasfondo)}`)
+  if (privado && f.secreto) l.push(`🤫 <i>Tu secreto${f.secretoEstado && f.secretoEstado !== 'oculto' ? ` (${f.secretoEstado})` : ''}: ${esc(f.secreto)}</i>`)
+  if (privado && f.mentira) l.push(`🎭 <i>Lo que decís y no es verdad: ${esc(f.mentira)}</i>`)
   return l.join('\n')
 }
 
@@ -49,7 +60,7 @@ export function inventarioTexto(ctx: Ctx, p: Personaje): string {
     const nombre = i.id.startsWith('libre:') ? i.id.slice(6) : d?.nombre ?? i.id
     return `• ${esc(nombre)}${i.n > 1 ? ' ×' + i.n : ''}`
   })
-  return `🎒 <b>Inventario de ${esc(p.ficha.nombre)}</b> (${cantidadItems(p)}/${cargaMax(p.ficha)})\n${items.join('\n') || '(vacío)'}\n🔩 Chapas: ${p.chapas}`
+  return `🎒 <b>Inventario de ${esc(p.ficha.nombre)}</b> (${cantidadItems(p)}/${cargaMax(p.ficha, ctx.u)})\n${items.join('\n') || '(vacío)'}\n🔩 Chapas: ${p.chapas}`
 }
 
 export function estadoJugadorIcono(j: Jugador, partida: Partida, tienePj: boolean): string {
@@ -138,6 +149,8 @@ export function tarjetaTurnoTexto(ctx: Ctx, partida: Partida, j: Jugador, pj: Pe
   if (pj && !combate) l.push(`${esc(pj.ficha.nombre)} · ❤️ ${pj.salud}/${saludMaxEfectiva(pj)}`)
   if (pj && combate) l.push(esc(pj.ficha.nombre))
   l.push('━━━━━━━━━━━━━━')
+  // Contexto para decidir: dónde están, qué está en juego y con quién.
+  if (!combate) l.push(...contextoEscena(partida))
   if (partida.turno_vence && partida.turno_vence !== SIN_LIMITE) {
     l.push(`⏱ Vence ${fechaCorta(partida.turno_vence, ctx.cfg.tzMin)}`)
   } else if (partida.config.plazoH === -1) {
@@ -148,6 +161,35 @@ export function tarjetaTurnoTexto(ctx: Ctx, partida: Partida, j: Jugador, pj: Pe
 }
 
 const esCaidoTxt = (p: Personaje) => p.condiciones.includes('caido')
+
+/** Dónde están, qué está en juego y quién más está (solo lo que la mesa ya conoce). */
+export function contextoEscena(partida: Partida): string[] {
+  const m = partida.mundo
+  const e = m.escena
+  const l: string[] = []
+  const lugar = e?.lugar || m.ubicacion
+  if (lugar) l.push(`📍 ${esc(lugar)}`)
+  if (e?.pregunta) l.push(`❓ <i>${esc(e.pregunta)}</i>`)
+  const con = presentes(m, partida.turno_n).filter((n) => n.conocido !== false).map((n) => n.nombre)
+  if (con.length) l.push(`👥 Con: ${esc(con.join(', '))}`)
+  return l
+}
+
+/** Aviso privado de "te toca": qué pasó desde tu último turno, dónde están y qué hacer (sin IA). */
+export function avisoTurnoPrivado(partida: Partida, combate: boolean, coNarrador: boolean, novedades: string[]): string {
+  const l = [`🎲 <b>Te toca</b> en «${esc(partida.guion?.titulo ?? 'la partida')}».`]
+  if (novedades.length) l.push('', '<b>Desde tu último turno:</b>', ...novedades.map((x) => `• ${esc(x)}`))
+  if (!combate) {
+    const ctxEscena = contextoEscena(partida)
+    if (ctxEscena.length) l.push('', ...ctxEscena)
+  }
+  l.push('')
+  if (combate) l.push('⚔️ Están en combate: elegí tu acción con los botones de la tarjeta, en el grupo.')
+  else if (coNarrador) l.push('🎙️ Te toca como voz del mundo: respondé a la tarjeta en el grupo con una sugerencia.')
+  else l.push('✍️ Respondé a la tarjeta de tu turno en el grupo (texto o audio).')
+  if (!combate) l.push('❓ ¿Dudas antes de jugar? Escribime acá y te contesto con lo que sabe tu personaje.')
+  return l.join('\n')
+}
 
 /** Turno de un jugador sin personaje: juega como voz del mundo. */
 export function tarjetaCoNarradorTexto(ctx: Ctx, partida: Partida, j: Jugador): string {
@@ -224,21 +266,28 @@ export function nombreDuracion(d: string): string {
 
 export const AYUDA_GRUPO = `🎲 <b>Argos DJ — cómo se juega</b>
 
-• Cuando es tu turno, <b>respondé al mensaje del DJ</b> (o usá <code>/a lo que hacés</code>). Contá qué intenta tu personaje, no cómo termina.
+<b>Tu turno</b>
+• Cuando te toca, <b>respondé a la tarjeta del turno</b> (texto o 🎙️ audio) o usá <code>/a lo que hacés</code>. Contá qué intenta tu personaje, no cómo termina.
 • Si hay riesgo, el DJ pide una prueba: tocás <b>🎲 Tirar</b>. Podés gastar 🍀 Suerte o ⚡ Impulso para sumar un dado.
-• En las tiradas, cada dado que saque el número indicado o menos es un acierto. El DJ te dice cuántos aciertos necesitás.
-• También podés mandar un 🎙️ <b>audio respondiendo a tu turno</b>: el DJ lo transcribe y te muestra lo que entendió.
+• En combate elegís con los botones (o 💬 Acción libre para algo creativo).
+• La tarjeta del turno te dice dónde están y qué está en juego. El tablero fijado muestra el objetivo y cómo está cada uno.
+
+<b>Entre turnos</b>
+• <b>❓ Preguntale al DJ</b> (botón o <code>/dj ¿quién era Aldo?</code>): quién es quién, qué buscan, qué pasó, dónde están. No gasta tu turno y solo te dice lo que tu personaje sabe. Por privado, escribile directo.
 • Podés charlar libremente en el grupo: el DJ solo lee tu acción cuando es tu turno.
+• Tu ficha, tu secreto y lo que solo vos sabés te llegan por privado.
+
+<b>Personajes</b>
+• ⚡ Rápido: origen, variante y estilo, y te arma una ficha completa que editás por secciones.
+• 🎙️ Guiado: le contás quién querés jugar y el DJ te repregunta y lo arma.
+• Si tu personaje muere, elegís su legado y entrás con uno nuevo en la próxima escena.
 
 <b>Comandos</b>
-/ficha /inventario /party /misiones — info (sin gastar IA)
-/resumen — los últimos hechos · /radio — versión Radio Yermo
-/votacion pregunta | opción | opción — decisión del grupo
-/pasar — cedés tu turno · /saltear — propone saltear a quien está demorado
-/ausente 3d — avisás que no vas a estar · /volver
-/x — pedís cambiar el rumbo de la escena (anónimo)
-/regla tema — explica una regla · /tiradas — últimas tiradas
-/costo — gasto de IA · /config /final /limpiar_fijados /pausa /reanudar /fin /libro — anfitrión`
+/dj — preguntale al DJ · /ficha /inventario /party /misiones /resumen
+/radio — resumen narrado · /votacion pregunta | opción | opción
+/pasar · /saltear · /ausente 3d · /volver
+/x — pedís cambiar el rumbo de la escena (anónimo) · /regla tema · /tiradas
+Anfitrión: /config /final /fe_de_erratas /pausa /reanudar /fin /libro /costo /limpiar_fijados`
 
 export const REGLAS: Record<string, string> = {
   prueba: 'Tirás 2d20. Cada dado menor o igual a tu TN (atributo + habilidad) es un éxito. Con especialidad, un dado menor o igual al rango de la habilidad vale 2 éxitos. Un 20 es una complicación. La dificultad (1 a 4) es cuántos éxitos necesitás.',

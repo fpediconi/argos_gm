@@ -1,6 +1,7 @@
 import type { Combate, EnemigoEnCombate, Personaje, Universo, TiradaResuelta, PedidoTirada } from './tipos.js'
 import type { Rng } from './dados.js'
-import { armaPrincipal, defensaDe, proteccionDe, resolverPrueba, type Extra } from './reglas.js'
+import { armaPrincipal, danioArma, defensaDe, proteccionDe, resolverPrueba, type Extra } from './reglas.js'
+import { ATRIBUTOS } from './tipos.js'
 import { contarExitos, tirarDados } from './dados.js'
 import { barraVida, dadosTexto } from '../util.js'
 import { esCaido, saludMaxEfectiva, quitarItem, tieneItem } from './personaje.js'
@@ -84,7 +85,7 @@ export function ataqueJugador(u: Universo, p: Personaje, c: Combate, objetivoUid
   const partes: string[] = []
   for (const e of objetivos) {
     const prot = Math.max(0, e.prot - (arma.perfora ?? 0))
-    const d = Math.max(1, arma.danio + tirada.impulso - prot)
+    const d = Math.max(1, danioArma(p, u, arma) + tirada.impulso - prot)
     e.salud = Math.max(0, e.salud - d)
     danioTotal += d
     partes.push(e.salud <= 0 ? `💀 ${e.nombre} cae (−${d})` : `${e.nombre} −${d} ❤️ ${barraVida(e.salud, e.salud_max)} ${e.salud}/${e.salud_max}`)
@@ -103,7 +104,7 @@ export function turnoEnemigos(u: Universo, personajes: Personaje[], c: Combate, 
     const p = blancos[Math.floor(rng() % blancos.length)]
     const dados = tirarDados(2, rng)
     const r = contarExitos(dados, e.tn, 0, false)
-    const def = defensaDe(p)
+    const def = defensaDe(p, u)
     if (r.exitos >= def) {
       const impulso = r.exitos - def
       const prot = proteccionDe(p, u)
@@ -157,6 +158,8 @@ export function resolverCaidos(
   personajes: Personaje[],
   letalidad: 'suave' | 'normal' | 'hardcore',
   rng: Rng,
+  /** Los que esquivaron la muerte gastando toda su Suerte (pueden elegir morir igual). */
+  salvados: Personaje[] = [],
 ): string[] {
   const lineas: string[] = []
   for (const p of personajes) {
@@ -180,14 +183,37 @@ export function resolverCaidos(
         p.salud = 1
         p.penal_salud = Math.min(3, p.penal_salud + 1)
         lineas.push(`🍀 ${n} se salva por poco (Suerte ${dado.join('·')}): queda magullado (salud máxima −1 hasta el próximo capítulo).`)
+      } else if (p.suerte > 0) {
+        // Última oportunidad: gasta toda su Suerte y vive, con una cicatriz para siempre.
+        quitarCaido()
+        p.salud = 1
+        p.suerte = 0
+        const c = cicatriz(p, rng)
+        lineas.push(`🍀 ${n} tendría que haber muerto (Suerte ${dado.join('·')}), pero se aferra a la vida gastando toda su Suerte. Le queda una cicatriz: ${c}.`)
+        salvados.push(p)
       } else {
-        // Letalidad Normal: si falla la Suerte, muere (antes hacía falta además sacar un 20).
+        // Letalidad Normal: si falla la Suerte y no le queda Suerte para gastar, muere.
         p.vivo = false
         lineas.push(`☠️ ${n} no lo logró (Suerte ${dado.join('·')}). Murió.`)
       }
     }
   }
   return lineas
+}
+
+const CICATRICES: Record<string, string> = {
+  FUE: 'un brazo que ya no responde igual', PER: 'un ojo nublado', RES: 'los pulmones quemados', CAR: 'la cara marcada',
+  INT: 'lagunas en la memoria', AGI: 'una rodilla destrozada', SUE: 'la sensación de que la muerte le debe una',
+}
+
+/** Marca permanente de haber esquivado la muerte: −1 a un atributo (mínimo 4). */
+export function cicatriz(p: Personaje, rng: Rng): string {
+  const opciones = ATRIBUTOS.filter((a) => p.ficha.atributos[a] > 4)
+  const a = opciones.length ? opciones[(rng() - 1) % opciones.length] : 'SUE'
+  if (p.ficha.atributos[a] > 4) p.ficha.atributos[a]--
+  const texto = `${CICATRICES[a]} (−1 ${a})`
+  p.ficha.cicatrices = [...(p.ficha.cicatrices ?? []), texto]
+  return texto
 }
 
 /**
@@ -205,7 +231,7 @@ export function golpeCreativo(
   if (!tirada.exito) {
     return { tirada, linea: `💬 ${p.ficha.nombre} intenta ${pedido.motivo.toLowerCase()} contra ${nombreBlanco}: ❌ no sale${tirada.complicaciones ? ' ⚠️ ¡y algo sale mal!' : ''}`, danio: 0, muertos, complicacion: tirada.complicaciones > 0 }
   }
-  const base = arma.danio + tirada.impulso + (pedido.dificultad - 1) * 2
+  const base = danioArma(p, u, arma) + tirada.impulso + (pedido.dificultad - 1) * 2
   let d: number
   let parte: string
   if (blanco.tipo === 'enemigo') {

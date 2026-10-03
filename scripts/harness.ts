@@ -84,6 +84,7 @@ export class Jugadores {
       const tocarLo = async (re: RegExp) => { const d = datos.find((x) => re.test(x)); if (!d) return false; await this.tocar(id, d, dm, ult.id); return true }
       if (datos.includes('c:md:r')) { await this.tocar(id, 'c:md:r', dm, ult.id); continue }
       if (datos.some((d) => d.startsWith('c:or:'))) { await this.tocar(id, `c:or:${opts.origen ?? 'refugio'}`, dm, ult.id); continue }
+      if (datos.includes('c:so:r') && !datos.includes('c:ok')) { await this.tocar(id, 'c:so:r', dm, ult.id); continue }
       if (datos.some((d) => d.startsWith('c:aq:'))) { await this.tocar(id, `c:aq:${opts.arq ?? 'soldado'}`, dm, ult.id); continue }
       if (datos.includes('c:aj:ok')) { await this.tocar(id, 'c:aj:ok', dm, ult.id); continue }
       if (await tocarLo(/^c:ar:/)) continue

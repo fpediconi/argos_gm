@@ -1,17 +1,20 @@
 import type { Ctx } from '../ctx.js'
 import type { Intencion, Jugador, Partida, Personaje, PedidoTirada, TiradaResuelta } from '../motor/tipos.js'
 import type { SalidaNarrar } from '../dj/cerebro.js'
-import { ErrorPresupuesto, clasificarAccionCombate, clasificarIntencion, decidirTurno, epilogo, recomprimirResumen, transmisionRadio } from '../dj/servicios.js'
+import { ErrorPresupuesto, clasificarAccionCombate, clasificarIntencion, decidirTurno, epilogo, recomprimirResumen, resumenCapitulo, transmisionRadio } from '../dj/servicios.js'
+import { aplicarNarrativa, despedida, migrarCanon, nuevaRondaNarrativa, ofrecerFinal, prepararEscena, reconciliarSalida, registrarHecho } from './narrativa.js'
+import { beatQueToca, contarMencionJugador, eventoDesdeEstado, narrativaDe } from '../motor/canon.js'
+import { pjHabilitado } from '../dj/contexto.js'
 import { aplicarCambios, buscarPj, claveJugador, esNpcMuerto, marcarNpcMuerto, npcsVivos } from '../motor/estado.js'
-import { esCaido } from '../motor/personaje.js'
+import { esCaido, suerteMax } from '../motor/personaje.js'
 import { armaPrincipal, resolverPrueba, tnDe, type Extra } from '../motor/reglas.js'
 import { crearCombate, golpeCreativo, resolverCaidos, vivos } from '../motor/combate.js'
 import { siguienteJugador, vencimiento } from '../motor/turnos.js'
 import {
-  esCapituloFinal, forzarClimax, faseDe, intervaloEvento, puedeCerrarAntes, recalcularObjetivo, registrarTurno, ritmoDe, ritmoNuevo, sortearEvento,
+  actoActual, esCapituloFinal, forzarClimax, faseDe, intervaloEvento, puedeCerrarAntes, recalcularObjetivo, registrarTurno, ritmoDe, ritmoNuevo, sortearEvento,
 } from '../motor/ritmo.js'
 import { esc, recortar, textoIA } from '../util.js'
-import { mencion, resultadoTiradaTexto, tarjetaCoNarradorTexto, tarjetaTiradaTexto, tarjetaTurnoTexto } from '../telegram/textos.js'
+import { avisoTurnoPrivado, mencion, resultadoTiradaTexto, tarjetaCoNarradorTexto, tarjetaTiradaTexto, tarjetaTurnoTexto } from '../telegram/textos.js'
 import { tecladoAbandono, tecladoInfo, tecladoMejora, tecladoMuerte, tecladoTiradaBotones } from '../telegram/teclados.js'
 import { aGrupo, aPrivado, botonGrupo, botonPrivado, cargar, fijarSolo, pjDe, refrescarTablero, registrar, urlUnirse } from './comun.js'
 import { comenzarCombate, tecladoCombateDe } from './combate.js'
@@ -27,28 +30,36 @@ const MAX_ACCION = 600
 // ------------------------------------------------------------------ turnos
 
 /** Partidas creadas con la versión anterior: se completan al vuelo (ritmo y objetivo principal). */
-function migrar(partida: Partida, activos: number): void {
+function migrar(ctx: Ctx, partida: Partida, activos: number, pjs: Personaje[]): void {
   ritmoDe(partida, activos)
   if (partida.guion && !partida.mundo.misiones.some((m) => m.principal)) {
     partida.mundo.misiones.unshift({ id: 'principal', texto: recortar(partida.config.premisa || partida.guion.premisa, 120), estado: 'activa', principal: true })
   }
   if (!partida.config.violencia) partida.config.violencia = 'implicita'
+  migrarCanon(ctx, partida, pjs)
 }
 
 export async function iniciarTurno(ctx: Ctx, pid: number): Promise<void> {
   const { partida, jugadores, pjs } = cargar(ctx, pid)
   if (partida.estado !== 'EN_JUEGO') return
-  migrar(partida, jugadores.filter((j) => j.estado === 'activo').length)
+  migrar(ctx, partida, jugadores.filter((j) => j.estado === 'activo').length, pjs)
   const combate = partida.mundo.combate
   // Nadie en pie: la partida no se traba, se ofrecen personajes nuevos o terminar.
   if (pjs.length === 0 && ctx.db.personajesTodos(pid).length > 0) return sinSobrevivientes(ctx, partida)
   const puede = (j: Jugador) => {
     const pj = pjDe(pjs, j)
     if (!pj) return !combate && esCoNarrador(ctx, j)
+    // Duelo antes del reemplazo: el personaje nuevo espera a la próxima escena.
+    if (!pjHabilitado(partida, pj)) return false
     if (combate) return !esCaido(pj) && !combate.orden.includes(j.id)
     return true
   }
-  const sig = siguienteJugador(jugadores, partida.turno_jugador_id, puede)
+  let sig = siguienteJugador(jugadores, partida.turno_jugador_id, puede)
+  // Si los únicos que pueden jugar están esperando su entrada, entran ya (nadie queda trabado).
+  if (!sig && pjs.some((p) => !pjHabilitado(partida, p))) {
+    for (const p of pjs) if (p.ficha.entraEscena !== undefined) { delete p.ficha.entraEscena; ctx.db.guardarPersonaje(p) }
+    sig = siguienteJugador(jugadores, partida.turno_jugador_id, puede)
+  }
   if (!sig) {
     if (combate) return // el combate decide qué hacer al no haber pendientes
     partida.estado = 'PAUSADA'
@@ -71,7 +82,10 @@ export async function iniciarTurno(ctx: Ctx, pid: number): Promise<void> {
   if (sig.nuevaRonda && !combate) {
     partida.ronda++
     partida.rondas_cap++
-    if (partida.ronda > 1) await avanzarAmenaza(ctx, partida, 1)
+    if (partida.ronda > 1) {
+      await avanzarAmenaza(ctx, partida, 1)
+      nuevaRondaNarrativa(ctx, partida, pjs)
+    }
   }
   const anterior = partida.turno_msg_id
   partida.turno_jugador_id = sig.jugador.id
@@ -89,6 +103,8 @@ export async function iniciarTurno(ctx: Ctx, pid: number): Promise<void> {
     ? [[{ text: '🧑‍🚀 Crear otro personaje', url: urlUnirse(ctx, partida.id) }], [{ text: '⏭️ Pasar', callback_data: `i:${partida.id}:pasar` }]]
     : combate && pj ? tecladoCombateDe(ctx, partida, pj, pjs) : tecladoInfo(partida.id, !!partida.mundo.ideas?.length)
   partida.turno_msg_id = await aGrupo(ctx, partida, texto, { teclado })
+  // Lo que pasó desde su último turno, para el aviso privado (sin IA).
+  const novedades = ctx.db.bitacoraDesde(partida.id, sig.jugador.ultimo_visto_n).filter((b) => b.cronica).slice(-4).map((b) => b.cronica)
   sig.jugador.ultimo_visto_n = ctx.db.maxBitacora(partida.id)
   ctx.db.guardarJugador(sig.jugador)
   ctx.db.guardarPartida(partida)
@@ -99,7 +115,7 @@ export async function iniciarTurno(ctx: Ctx, pid: number): Promise<void> {
   ctx.db.guardarPartida(partida)
 
   await cancelarObsoletas(ctx, pid)
-  await aPrivado(ctx, partida, sig.jugador, `🎲 <b>Te toca</b> en «${esc(partida.guion?.titulo ?? 'la partida')}». Respondé a la tarjeta de tu turno en el grupo.`, botonGrupo(partida, '👉 Ir a mi turno', partida.turno_msg_id))
+  await aPrivado(ctx, partida, sig.jugador, avisoTurnoPrivado(partida, !!combate, coNarrador, novedades), botonGrupo(partida, '👉 Ir a mi turno', partida.turno_msg_id))
   await refrescarTablero(ctx, pid)
 }
 
@@ -234,6 +250,13 @@ export async function procesarAccion(ctx: Ctx, pid: number, userId: string, text
     }
   }
   registrar(ctx, partida, j.id, 'accion', `${pj.ficha.nombre}: ${texto}`)
+  contarMencionJugador(partida.mundo, texto)
+  // Momento de definición: lo que el jugador hace ahora queda como la elección de su personaje.
+  const arco = (partida.mundo.arcos ?? []).find((a) => a.pj === pj.id && a.definiendo)
+  if (arco) {
+    arco.definiendo = false
+    registrarHecho(ctx, partida, `${pj.ficha.nombre} eligió: ${texto}`, { fuente: 'jugador', sobre: [claveJugador(pj)] })
+  }
   partida.paso = { tipo: 'narrando', accion: texto, jugadorId: j.id, intencion }
   ctx.db.guardarPartida(partida)
   switch (intencion.tipo) {
@@ -323,13 +346,25 @@ async function narrarAccion(ctx: Ctx, pid: number, j: Jugador, pj: Personaje, te
   if (op.intencion?.tipo === 'matar' && tirada) extras.push(INSTRUCCION_MATAR(op.intencion.objetivo || 'el objetivo', tirada.exito))
   if (op.extra) extras.push(op.extra)
   try {
-    const d = await decidirTurno(ctx, partida, pjs, jugadores, { tarea: 'turno', usuario, turnoPj: op.coNarrador ? undefined : pj, forzarNarrar: !!tirada || desenlace || !!op.extra, extra: extras.join('\n') || undefined })
+    const turnoPj = op.coNarrador ? undefined : pj
+    const extra = extras.join('\n') || undefined
+    const d = await decidirTurno(ctx, partida, pjs, jugadores, { tarea: 'turno', usuario, turnoPj, forzarNarrar: !!tirada || desenlace || !!op.extra, extra })
     if (d.tipo === 'tirada') {
       await pedirTirada(ctx, pid, j, pj, texto, d.preambulo, d.pedido, op.intencion)
     } else if (op.convencer) {
       await mostrarConvencimiento(ctx, pid, j, pj, d.salida)
     } else {
-      await cerrarTurnoConNarracion(ctx, pid, j, pj, d.salida, tirada, { msgTirada: op.msgTirada, intencion: op.intencion, notas: op.notas })
+      // Antes de mostrarla: la narración no puede contradecir al estado (si lo hace, se repara).
+      const muerteAplicada = op.extra && /^FINAL DE /.test(op.extra) ? pj.id : undefined
+      const r = await reconciliarSalida(ctx, partida, pjs, turnoPj, d.salida, {
+        intencion: op.intencion, tirada, muerteAplicada,
+        reparar: async (correccion) => {
+          const d2 = await decidirTurno(ctx, partida, pjs, jugadores, { tarea: 'turno', usuario: `${usuario}\n${correccion}`, turnoPj, forzarNarrar: true, extra })
+          return d2.tipo === 'narrar' ? d2.salida : null
+        },
+      })
+      ctx.db.guardarPartida(partida)
+      await cerrarTurnoConNarracion(ctx, pid, j, pj, r.salida, tirada, { msgTirada: op.msgTirada, intencion: op.intencion, notas: [...(op.notas ?? []), ...r.notas] })
     }
   } catch (e) {
     const p2 = ctx.db.partida(pid)!
@@ -473,6 +508,7 @@ async function morir(ctx: Ctx, partida: Partida, pj: Personaje, motivo: string):
 
 /** Al jugador de un personaje muerto: botón para crear otro. */
 export async function avisarMuerte(ctx: Ctx, partida: Partida, j: Jugador, pj: Personaje): Promise<void> {
+  await despedida(ctx, partida, j, pj)
   await aPrivado(ctx, partida, j, `☠️ <b>${esc(pj.ficha.nombre)}</b> murió. Si querés seguir jugando, armá otro personaje: el DJ lo mete en la próxima escena.`, [[{ text: '🧑‍🚀 Crear otro personaje', url: urlUnirse(ctx, partida.id) }]])
 }
 
@@ -578,9 +614,13 @@ export async function cerrarTurnoConNarracion(
 
   const ritmo = ritmoDe(partida, jugadores.filter((x) => x.estado === 'activo').length)
   const eraDesenlace = !!ritmo.cierrePendiente && !enCombate
+  const fase = faseDe(ritmo)
 
-  const res = aplicarCambios(ctx.u, partida.mundo, pjs, salida.cambios, { enCombate })
-  const notas = [...(op.notas ?? []), ...notasMatar, ...res.aplicados]
+  // La escena nueva va primero: define quién está antes de que los cambios sumen o saquen NPC.
+  const cambioEscena = prepararEscena(partida, pjs, salida, enCombate)
+  const res = aplicarCambios(ctx.u, partida.mundo, pjs, salida.cambios, { enCombate, fase, turno: partida.turno_n, ronda: partida.ronda })
+  const canon = await aplicarNarrativa(ctx, partida, pjs, j, pj, salida, res, { tirada, enCombate })
+  const notas = [...(op.notas ?? []), ...notasMatar, ...res.aplicados, ...canon.notas]
   if (veredicto.tipo === 'aplicar') notas.push(await morir(ctx, partida, veredicto.pj, salida.cambios?.muerte?.motivo ?? ''))
   else if (veredicto.nota) notas.push(veredicto.nota)
   if (res.caidos.length) notas.push(...res.caidos.map((n) => `🩸 ${n} queda CAÍDO`))
@@ -589,8 +629,13 @@ export async function cerrarTurnoConNarracion(
   if (!enCombate) {
     const caidos = pjs.filter((p) => p.vivo && esCaido(p))
     if (caidos.length) {
-      const lineas = resolverCaidos(caidos, partida.config.letalidad, ctx.rng)
+      const salvados: Personaje[] = []
+      const lineas = resolverCaidos(caidos, partida.config.letalidad, ctx.rng, salvados)
       notas.push(...lineas)
+      for (const p of salvados) {
+        const jj = ctx.db.jugador(p.jugador_id)
+        if (jj) await ofrecerFinal(ctx, partida, jj, p)
+      }
       for (const p of caidos) if (!p.vivo) {
         registrar(ctx, partida, p.jugador_id, 'sistema', `${p.ficha.nombre} murió.`, `${p.ficha.nombre} murió.`)
         const jj = ctx.db.jugador(p.jugador_id)
@@ -601,8 +646,11 @@ export async function cerrarTurnoConNarracion(
   for (const p of pjs) ctx.db.guardarPersonaje(p)
   if (res.relojesLlenos.some((n) => n === partida.mundo.relojes.find((r) => r.id === 'amenaza')?.nombre)) forzarClimax(ritmo)
 
-  const cronica = salida.cronica || `${pj.ficha.nombre}: ${recortar(salida.narracion, 90)}`
+  const cronica = salida.cronica || salida.hechos?.join(' · ') || `${pj.ficha.nombre}: ${recortar(salida.narracion, 90)}`
   registrar(ctx, partida, j.id, 'narracion', salida.narracion, cronica)
+  // Lo que el motor aplicó de verdad queda a la vista de la IA en el próximo turno.
+  const aplicadoMotor = [...res.aplicados, ...res.internos, ...notasMatar, ...canon.notas]
+  if (aplicadoMotor.length) registrar(ctx, partida, j.id, 'motor', `aplicado: ${aplicadoMotor.join(' · ')}`)
   // En combate, una acción libre cuenta como la acción de la ronda.
   if (enCombate && partida.mundo.combate) {
     const c = partida.mundo.combate
@@ -614,7 +662,7 @@ export async function cerrarTurnoConNarracion(
   ctx.db.guardarJugador(j)
 
   // Evento obligatorio: si la narración cambió algo, ocurrió; si no, queda pendiente.
-  const cambioAlgo = res.aplicados.length > 0 || res.internos.length > 0 || notasMatar.length > 0 || !!salida.combate || veredicto.tipo === 'aplicar'
+  const cambioAlgo = res.aplicados.length > 0 || res.internos.length > 0 || notasMatar.length > 0 || !!salida.combate || veredicto.tipo === 'aplicar' || canon.movio || cambioEscena
   if (ritmo.eventoPendiente && cambioAlgo) {
     ritmo.eventoPendiente = undefined
     ritmo.proximoEvento = ritmo.turnos + 1 + intervaloEvento(ritmo.objetivo)
@@ -687,6 +735,15 @@ export async function cerrarTurnoConNarracion(
 async function programarEvento(ctx: Ctx, partida: Partida): Promise<void> {
   const r = partida.mundo.ritmo!
   const g = partida.guion
+  // Primero, lo que pide el estado: un hito atrasado, un hilo olvidado o el arco de quien tiene menos foco.
+  const pjs = ctx.db.personajesVivos(partida.id)
+  const jugadores = ctx.db.jugadores(partida.id)
+  const delEstado = eventoDesdeEstado(partida.mundo, g, { actoPorRitmo: actoActual(partida), turno: partida.turno_n, arco: beatQueToca(partida.mundo, pjs, jugadores, undefined, partida.turno_n) })
+  if (delEstado) {
+    r.eventoPendiente = delEstado.instruccion
+    registrar(ctx, partida, null, 'sistema', `Evento programado: ${delEstado.motivo}.`)
+    return
+  }
   const ev = sortearEvento({
     encuentros: g?.encuentros ?? [],
     bestiario: ctx.u.bestiario.filter((b) => !['civil', 'guardia', 'jefe'].includes(b.id)).map((b) => b.id),
@@ -720,12 +777,19 @@ export async function cerrarCapitulo(ctx: Ctx, pid: number): Promise<void> {
     return
   }
   for (const p of pjs) {
-    p.suerte = p.ficha.atributos.SUE
+    p.suerte = suerteMax(ctx.u, p)
     p.penal_salud = 0
     p.salud = Math.min(p.salud_max, Math.max(p.salud, Math.ceil(p.salud_max / 2)))
     p.condiciones = p.condiciones.filter((c) => c !== 'caido')
     ctx.db.guardarPersonaje(p)
   }
+  // Memoria en capas: el capítulo que se cierra queda resumido y congelado.
+  partida.mundo.capitulos = [...(partida.mundo.capitulos ?? []), await resumenCapitulo(ctx, partida)]
+  partida.resumen = ''
+  partida.mundo.inicioCap = ctx.db.maxBitacora(pid)
+  const n = narrativaDe(partida.mundo)
+  n.muertosRecientes = []
+  n.preguntas = {}
   partida.capitulo++
   partida.rondas_cap = 0
   const activos = jugadores.filter((j) => j.estado === 'activo').length

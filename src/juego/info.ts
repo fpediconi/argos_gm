@@ -2,18 +2,24 @@ import type { Ctx } from '../ctx.js'
 import type { Jugador, Partida } from '../motor/tipos.js'
 import { esc, parseDuracion, formatoDuracion, fechaCorta, textoIA } from '../util.js'
 import { alertasTexto, fichaTexto, inventarioTexto, partyTexto, REGLAS } from '../telegram/textos.js'
-import { npcsVivos } from '../motor/estado.js'
+import { claveJugador, npcsConocidos } from '../motor/estado.js'
+import { contarMencionJugador, hilosAbiertos, menciona, narrativaDe, presentes } from '../motor/canon.js'
+import { proximoJugador } from '../dj/contexto.js'
+import { responderPregunta } from '../dj/servicios.js'
+import type { Teclado } from '../telegram/api.js'
+import { registrarHecho } from './narrativa.js'
 import { estadoPresupuesto } from '../dj/presupuesto.js'
 import { transmisionRadio } from '../dj/servicios.js'
+
 import { registrar, refrescarTablero, pjDe, cargar } from './comun.js'
 import { ajustarRitmo, avanzarTurno, enviarLibro, finalizarPartida, iniciarTurno, pedirFinal, saltarTurno } from './turno.js'
 import { SIN_LIMITE } from '../motor/turnos.js'
 
 type Resp = (html: string) => Promise<void>
 
-export async function cmdFicha(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
+export async function cmdFicha(ctx: Ctx, p: Partida, j: Jugador, resp: Resp, privado = false) {
   const pj = ctx.db.ultimoPersonajeDe(j.id)
-  await resp(pj ? fichaTexto(ctx, pj) : 'Todavía no tenés personaje. Tocá «Crear mi personaje» en el tablero.')
+  await resp(pj ? fichaTexto(ctx, pj, privado) : 'Todavía no tenés personaje. Tocá «Crear mi personaje» en el tablero.')
 }
 
 export async function cmdInventario(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
@@ -61,8 +67,8 @@ export async function cmdResumen(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
   if (p.modo_escena === 'combate' && m.combate) l.push(`⚔️ Combate, ronda ${m.combate.ronda}: ${m.combate.enemigos.filter((e) => e.salud > 0).map((e) => `${esc(e.nombre)} ${e.salud}/${e.salud_max}`).join(' · ')}`)
   const act = m.misiones.filter((x) => x.estado === 'activa' && !x.principal)
   if (act.length) l.push('📌 ' + act.map((x) => esc(x.texto)).join(' · '))
-  const presentes = npcsVivos(m)
-  if (presentes.length) l.push('👥 ' + presentes.map((n) => `${esc(n.nombre)} (${esc(n.actitud)})`).join(' · '))
+  const enEscena = presentes(m, p.turno_n).filter((n) => n.conocido !== false)
+  if (enEscena.length) l.push('👥 ' + enEscena.map((n) => `${esc(n.nombre)} (${esc(n.actitud)})`).join(' · '))
   if (m.muertos?.length) l.push('💀 ' + m.muertos.map(esc).join(', '))
   l.push(...alertasTexto(p))
   if (m.decisiones?.length) l.push('🗳️ ' + m.decisiones.slice(-3).map(esc).join(' · '))
@@ -108,7 +114,9 @@ export async function cmdCosto(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
   if (p.anfitrion_id !== j.user_id && ctx.cfg.adminId !== j.user_id) return resp('Solo el anfitrión puede ver el gasto.')
   const pres = estadoPresupuesto(ctx, p.id)
   const por = ctx.db.gastoPorRol(p.id)
-  await resp(`💸 <b>Gasto de IA</b>\nHoy: US$ ${pres.gastoPartida.toFixed(3)} de ${pres.topePartida.toFixed(2)} (partida) · global US$ ${pres.gastoGlobal.toFixed(3)} de ${pres.topeGlobal.toFixed(2)}\nEstado del fusible: <b>${pres.nivel}</b>\n\nTotal por tipo:\n${por.map((r) => `• ${esc(r.rol)}: ${r.llamadas} llamadas · ${r.tok_in} in (${r.tok_cache} en caché) · ${r.tok_out} out · US$ ${r.usd.toFixed(3)}`).join('\n') || '(sin llamadas todavía)'}`)
+  const n = p.mundo.narrativa
+  const coherencia = n ? `\n\n🧭 Coherencia: ${n.auditorias ?? 0} narraciones auditadas · ${n.reparaciones ?? 0} reparadas · ${n.contradicciones ?? 0} contradicciones detectadas` : ''
+  await resp(`💸 <b>Gasto de IA</b>\nHoy: US$ ${pres.gastoPartida.toFixed(3)} de ${pres.topePartida.toFixed(2)} (partida) · global US$ ${pres.gastoGlobal.toFixed(3)} de ${pres.topeGlobal.toFixed(2)}\nEstado del fusible: <b>${pres.nivel}</b>\n\nTotal por tipo:\n${por.map((r) => `• ${esc(r.rol)}: ${r.llamadas} llamadas · ${r.tok_in} in (${r.tok_cache} en caché) · ${r.tok_out} out · US$ ${r.usd.toFixed(3)}`).join('\n') || '(sin llamadas todavía)'}${coherencia}`)
 }
 
 export async function cmdRegla(ctx: Ctx, args: string, resp: Resp) {
@@ -210,6 +218,118 @@ export async function cmdFin(ctx: Ctx, p: Partida, j: Jugador, resp: Resp) {
 export async function cmdLibro(ctx: Ctx, p: Partida, resp: Resp) {
   if (ctx.db.maxBitacora(p.id) === 0) return resp('Todavía no hay historia para el libro.')
   await enviarLibro(ctx, p.id)
+}
+
+// ------------------------------------------------------------------ /dj: preguntarle al DJ entre turnos
+
+const MAX_PREGUNTAS_IA = 5
+
+export function tecladoDj(pid: number): Teclado {
+  return [
+    [{ text: '👥 ¿Quién es quién?', callback_data: `j:${pid}:quien` }, { text: '🎯 ¿Qué buscamos?', callback_data: `j:${pid}:obj` }],
+    [{ text: '📜 ¿Qué pasó?', callback_data: `j:${pid}:paso` }, { text: '📍 ¿Dónde estamos?', callback_data: `j:${pid}:donde` }],
+  ]
+}
+
+export const TEXTO_MENU_DJ = '❓ <b>Preguntale al DJ</b> (no gasta tu turno)\nTocá una opción o escribí tu pregunta. En el grupo: <code>/dj ¿quién era la Colorada?</code> · por privado: escribila directo.\n<i>Solo te dice lo que tu personaje sabe.</i>'
+
+/** Nivel 0: respuestas armadas desde el Canon, sin IA y sin spoilers. */
+export function respuestaDj(ctx: Ctx, p: Partida, j: Jugador | undefined, que: string): string {
+  const m = p.mundo
+  const jugadores = ctx.db.jugadores(p.id)
+  const pjs = ctx.db.personajesVivos(p.id)
+  const miPj = j ? pjs.find((x) => x.jugador_id === j.id) : undefined
+  const l: string[] = []
+  if (que === 'quien') {
+    const prox = proximoJugador(p, jugadores, pjs)
+    l.push('👥 <b>Quién es quién</b>', '', '<b>La mesa</b>')
+    for (const jj of jugadores.filter((x) => x.estado !== 'fuera' && x.estado !== 'creando')) {
+      const pj = pjs.find((x) => x.jugador_id === jj.id)
+      const marca = p.turno_jugador_id === jj.id ? ' 🎯 juega ahora' : prox?.id === jj.id ? ' ⏭ juega después' : ''
+      l.push(`• ${esc(jj.nombre)} → ${pj ? `<b>${esc(pj.ficha.nombre)}</b>${pj.ficha.bio ? ` — ${esc(pj.ficha.bio)}` : ''}` : '<i>sin personaje</i>'}${marca}`)
+    }
+    const conocidos = npcsConocidos(m)
+    const enEscena = new Set(presentes(m, p.turno_n).map((x) => x.id))
+    if (conocidos.length) {
+      l.push('', '<b>La gente que conocieron</b>')
+      for (const n of conocidos.sort((a, b) => Number(enEscena.has(b.id)) - Number(enEscena.has(a.id)))) {
+        const rel = miPj ? n.relacion?.[claveJugador(miPj)] : undefined
+        const relTxt = rel ? (rel.valor > 0 ? ' · te tiene simpatía' : rel.valor < 0 ? ' · no te quiere' : '') : ''
+        const estado = n.estado === 'muerto' ? ' 💀' : n.estado === 'huido' ? ' (se fue)' : n.estado === 'herido' ? ' (herido)' : ''
+        l.push(`• <b>${esc(n.nombre)}</b>${estado}${enEscena.has(n.id) ? ' 📍 está acá' : ''} — ${esc(n.publico || n.nota || n.actitud || '')}${relTxt}`)
+      }
+    } else l.push('', 'Todavía no conocieron a nadie con nombre.')
+  } else if (que === 'obj') {
+    const principal = m.misiones.find((x) => x.principal)
+    l.push('🎯 <b>Qué buscamos</b>')
+    if (principal) l.push(`<b>Objetivo:</b> ${esc(principal.texto)}${principal.estado !== 'activa' ? ` (${principal.estado})` : ''}`)
+    const logrados = (p.guion?.actos ?? []).flatMap((a) => a.hitos.filter((h) => h.cumplido))
+    if (logrados.length) l.push('', '<b>Lo que ya lograron</b>', ...logrados.map((h) => `✅ ${esc(h.texto)}`))
+    const otras = m.misiones.filter((x) => x.estado === 'activa' && !x.principal)
+    if (otras.length) l.push('', '<b>Pendientes</b>', ...otras.map((x) => `▫️ ${esc(x.texto)}`))
+    const hilos = hilosAbiertos(m).filter((h) => h.tipo !== 'principal' && (h.tipo !== 'personal' || h.pj === miPj?.id))
+    if (hilos.length) l.push('', '<b>Preguntas abiertas</b>', ...hilos.map((h) => `❔ ${esc(h.pregunta)}`))
+    if (miPj?.ficha.objetivo) l.push('', `<i>Lo tuyo (solo vos lo ves): ${esc(miPj.ficha.objetivo)}</i>`)
+  } else if (que === 'paso') {
+    const desde = j?.ultimo_visto_n ?? 0
+    const todas = ctx.db.bitacoraTodas(p.id).filter((b) => b.cronica)
+    const nuevas = todas.filter((b) => b.n > desde)
+    const lista = (nuevas.length ? nuevas : todas).slice(-10)
+    l.push(`📜 <b>${nuevas.length ? 'Lo que pasó desde tu último turno' : 'Lo último que pasó'}</b>`)
+    l.push(...(lista.length ? lista.map((b) => `• ${esc(b.cronica)}`) : ['La historia recién empieza.']))
+    if (m.capitulos?.length) l.push('', `<i>Antes: ${esc(m.capitulos.at(-1)!)}</i>`)
+  } else if (que === 'donde') {
+    const e = m.escena
+    l.push('📍 <b>Dónde estamos</b>')
+    l.push(`<b>${esc(e?.lugar || m.ubicacion || 'Lugar sin nombre')}</b>`)
+    const lugar = (m.lugares ?? []).find((x) => x.conocido && (e?.lugar ?? m.ubicacion) && menciona(e?.lugar ?? m.ubicacion, x.nombre))
+    if (lugar?.rasgo) l.push(esc(lugar.rasgo))
+    if (e?.pregunta) l.push('', `<b>Lo que está en juego:</b> ${esc(e.pregunta)}`)
+    const acá = presentes(m, p.turno_n).filter((x) => x.conocido !== false)
+    l.push('', acá.length ? `<b>Acá están:</b> ${acá.map((x) => esc(x.nombre)).join(', ')}` : 'No hay nadie más a la vista.')
+    const otros = (m.lugares ?? []).filter((x) => x.conocido && x !== lugar)
+    if (otros.length) l.push('', `<b>Lugares conocidos:</b> ${otros.map((x) => esc(x.nombre)).join(', ')}`)
+  }
+  return l.join('\n')
+}
+
+/** /dj [pregunta]: sin texto muestra el menú; con texto responde con la IA barata y SOLO lo que el personaje sabe. */
+export async function cmdDj(ctx: Ctx, p: Partida, j: Jugador, args: string, resp: (html: string, teclado?: Teclado) => Promise<void>) {
+  if (p.estado !== 'EN_JUEGO' && p.estado !== 'PAUSADA') return resp('La historia todavía no empezó.')
+  const pregunta = args.replace(/[<>]/g, ' ').trim().slice(0, 300)
+  if (!pregunta) return resp(TEXTO_MENU_DJ, tecladoDj(p.id))
+  const n = narrativaDe(p.mundo)
+  const uso = n.dj[j.user_id]?.turno === p.turno_n ? n.dj[j.user_id] : { turno: p.turno_n, n: 0 }
+  if (uso.n >= MAX_PREGUNTAS_IA) return resp(`🙊 Ya hiciste ${MAX_PREGUNTAS_IA} preguntas este turno. Mientras, los botones responden al toque:`, tecladoDj(p.id))
+  if (estadoPresupuesto(ctx, p.id).nivel === 'parado') return resp('💸 Sin presupuesto de IA por hoy. Los botones siguen andando:', tecladoDj(p.id))
+  uso.n++
+  n.dj[j.user_id] = uso
+  // La confusión es una señal: lo que la mesa pregunta, el DJ lo aclara en la ficción.
+  for (const npc of p.mundo.npcs) if (menciona(pregunta, npc.nombre)) n.preguntas[npc.id] = (n.preguntas[npc.id] ?? 0) + 1
+  if (/objetivo|qu[eé] (hay que|tenemos que|buscamos)|para qu[eé]/i.test(pregunta)) n.preguntas.objetivo = (n.preguntas.objetivo ?? 0) + 1
+  contarMencionJugador(p.mundo, pregunta)
+  ctx.db.guardarPartida(p)
+  const pj = ctx.db.personajeVivoDe(j.id)
+  registrar(ctx, p, j.id, 'ooc', `${j.nombre} preguntó al DJ: ${pregunta}`)
+  try {
+    const r = await responderPregunta(ctx, p, pj, pregunta)
+    await resp(`❓ <i>${esc(pregunta)}</i>\n\n🎲 ${textoIA(r)}`)
+  } catch {
+    await resp('📡 El DJ no tiene señal ahora. Probá con los botones:', tecladoDj(p.id))
+  }
+}
+
+/** /fe_de_erratas texto (anfitrión): deja un hecho que corrige la historia. */
+export async function cmdFeDeErratas(ctx: Ctx, p: Partida, j: Jugador, args: string, resp: Resp) {
+  if (p.anfitrion_id !== j.user_id) return resp('Solo el anfitrión puede corregir la historia.')
+  const texto = args.replace(/[<>]/g, ' ').trim().slice(0, 240)
+  if (!texto) return resp('Escribí la corrección: <code>/fe_de_erratas Tomás no murió: quedó herido en el muelle</code>')
+  const n = narrativaDe(p.mundo)
+  n.correcciones.push({ texto, hasta: p.turno_n + 3 })
+  registrarHecho(ctx, p, `Corrección: ${texto}`, { fuente: 'jugador' })
+  registrar(ctx, p, j.id, 'motor', `corrección del anfitrión: ${texto}`, `Corrección: ${texto}`)
+  ctx.db.guardarPartida(p)
+  await resp(`📝 Anotado. El DJ lo toma como verdad desde ahora: <i>${esc(texto)}</i>`)
 }
 
 export { cargar, pjDe }

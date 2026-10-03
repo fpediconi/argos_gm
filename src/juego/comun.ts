@@ -73,7 +73,7 @@ export async function refrescarTablero(ctx: Ctx, pid: number): Promise<void> {
       [{ text: '▶️ Empezar la aventura (anfitrión)', callback_data: `b:${pid}:empezar` }],
     ]
   } else if (partida.estado === 'EN_JUEGO' || partida.estado === 'PAUSADA') {
-    teclado = [[{ text: '➕ Sumarme a la partida', url: urlUnirse(ctx, pid) }]]
+    teclado = [[{ text: '➕ Sumarme a la partida', url: urlUnirse(ctx, pid) }], [{ text: '❓ Preguntarle al DJ', url: `https://t.me/${ctx.botUsername}?start=dj_${pid}` }]]
   }
   if (partida.tablero_msg_id) {
     try {
