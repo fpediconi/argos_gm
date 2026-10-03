@@ -44,14 +44,34 @@ test('openai: por defecto va por /responses, razona con herramientas y suma marg
   assert.equal(c.modoActivo(), '/responses')
 })
 
-test('openai: si /responses no anda, cae solo a /chat/completions y el turno sigue', async () => {
-  const s = await servidor((ruta) => (ruta === '/responses' ? { status: 400, json: { error: { message: 'unsupported' } } } : { status: 200, json: narrarChat }))
+test('openai: un 400 de /responses va por chat solo en esa llamada; tres seguidos lo apagan', async () => {
+  const s = await servidor((ruta) => (ruta === '/responses' ? { status: 400, json: { error: { message: 'bad' } } } : { status: 200, json: narrarChat }))
   const c = new CerebroOpenAI({ ...cfgPrueba, openaiBase: s.base, api: 'responses', modelos: { narrador: 'gpt-5.4-mini', util: 'm', guionista: 'm' } }, herramientasDe(u), () => {}, () => {})
-  const d = await c.decidir({ tarea: 'turno', rol: 'narrador', partidaId: 1, sistema: 'S', usuario: 'U', forzarNarrar: true, maxSalida: 900 })
-  const d2 = await c.decidir({ tarea: 'turno', rol: 'narrador', partidaId: 1, sistema: 'S', usuario: 'U', forzarNarrar: true, maxSalida: 900 })
-  s.cerrar()
+  const pedir = () => c.decidir({ tarea: 'turno', rol: 'narrador', partidaId: 1, sistema: 'S', usuario: 'U', forzarNarrar: true, maxSalida: 900 })
+  const d = await pedir()
   assert.equal(d.tipo === 'narrar' && d.salida.narracion, 'Por chat.')
-  assert.equal(d2.tipo, 'narrar')
-  assert.deepEqual(s.pedidos.map((p) => p.ruta), ['/responses', '/chat/completions', '/chat/completions'])
+  assert.equal(c.modoActivo(), '/responses', 'un 400 suelto no lo apaga')
+  await pedir(); await pedir(); await pedir()
+  s.cerrar()
+  assert.deepEqual(s.pedidos.map((p) => p.ruta), ['/responses', '/chat/completions', '/responses', '/chat/completions', '/responses', '/chat/completions', '/chat/completions'])
   assert.match(c.modoActivo(), /cayó/)
+})
+
+test('openai: si el endpoint no existe (404), cae a chat para siempre', async () => {
+  const s = await servidor((ruta) => (ruta === '/responses' ? { status: 404, json: {} } : { status: 200, json: narrarChat }))
+  const c = new CerebroOpenAI({ ...cfgPrueba, openaiBase: s.base, api: 'responses', modelos: { narrador: 'gpt-5.4-mini', util: 'm', guionista: 'm' } }, herramientasDe(u), () => {}, () => {})
+  await c.decidir({ tarea: 'turno', rol: 'narrador', partidaId: 1, sistema: 'S', usuario: 'U', forzarNarrar: true, maxSalida: 900 })
+  await c.decidir({ tarea: 'turno', rol: 'narrador', partidaId: 1, sistema: 'S', usuario: 'U', forzarNarrar: true, maxSalida: 900 })
+  s.cerrar()
+  assert.deepEqual(s.pedidos.map((p) => p.ruta), ['/responses', '/chat/completions', '/chat/completions'])
+})
+
+test('openai: en /responses, un pedido JSON lleva la palabra "json" en la entrada', async () => {
+  const s = await servidor(() => ({ status: 200, json: { output: [{ type: 'message', content: [{ type: 'output_text', text: '{"ok":true}' }] }], usage: {} } }))
+  const c = new CerebroOpenAI({ ...cfgPrueba, openaiBase: s.base, api: 'responses', modelos: { narrador: 'm', util: 'gpt-5.4-nano', guionista: 'm' } }, herramientasDe(u), () => {}, () => {})
+  const t = await c.texto({ tarea: 'prueba', rol: 'util', partidaId: null, sistema: 'Devolvé solo JSON válido.', usuario: 'Devolvé {"ok":true}', maxSalida: 200, json: true })
+  s.cerrar()
+  assert.equal(t, '{"ok":true}')
+  assert.ok(s.pedidos[0].body.input.some((m: { content: string }) => /json/i.test(m.content)))
+  assert.deepEqual(s.pedidos[0].body.text, { format: { type: 'json_object' } })
 })

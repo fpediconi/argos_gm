@@ -84,6 +84,8 @@ const MARGEN_RAZONAMIENTO: Record<string, number> = { minimal: 500, low: 2000, m
 export class CerebroOpenAI implements Cerebro {
   /** Se pone en true si /responses falló con un error de pedido: desde ahí todo va por /chat/completions. */
   private sinResponses = false
+  /** Errores 400 seguidos de /responses: uno suelto se resuelve por chat solo para esa llamada; tres seguidos lo apagan. */
+  private errores400 = 0
   constructor(private cfg: Config, private herramientas: { pedirTirada: unknown; narrar: unknown }, private registrar: RegistrarUso, private log: (...a: unknown[]) => void = console.log) {}
 
   private get responses(): boolean {
@@ -102,12 +104,12 @@ export class CerebroOpenAI implements Cerebro {
     return conHerramientas ? this.cfg.reasoningEffortTools : this.cfg.reasoningEffort
   }
 
-  private async llamar(rol: RolIA, partidaId: number | null, cuerpo: Record<string, unknown>): Promise<any> {
+  private async llamar(rol: RolIA, partidaId: number | null, cuerpo: Record<string, unknown>, forzarChat = false): Promise<any> {
     const modelo = this.cfg.modelos[rol]
     const razona = /^(gpt-5|o\d)/.test(modelo)
     let body: Record<string, unknown>
     let ruta = '/chat/completions'
-    const usaResponses = this.responses
+    const usaResponses = this.responses && !forzarChat
     if (usaResponses) {
       // Responses API: admite razonamiento JUNTO con herramientas (en /chat/completions gpt-5.4+ no).
       ruta = '/responses'
@@ -139,13 +141,17 @@ export class CerebroOpenAI implements Cerebro {
           this.registrar({ partidaId, rol, modelo, uso: { tok_in: 0, tok_cache: 0, tok_out: 0, usd: 0, ms: Date.now() - t0 }, ok: false })
           // /responses no disponible para esta cuenta o modelo: se sigue por /chat/completions sin cortar el juego.
           if (usaResponses && [400, 404, 405].includes(res.status)) {
-            this.sinResponses = true
-            this.log(`⚠️ /responses respondió ${res.status}; sigo por /chat/completions sin razonamiento en herramientas. Detalle: ${txt.slice(0, 300)}`)
-            return this.llamar(rol, partidaId, cuerpo)
+            // 404/405: el endpoint no existe para esta cuenta → se apaga. 400: puede ser de este pedido → solo esta llamada va por chat.
+            this.errores400 = res.status === 400 ? this.errores400 + 1 : this.errores400
+            const apagar = res.status !== 400 || this.errores400 >= 3
+            if (apagar) this.sinResponses = true
+            this.log(`⚠️ /responses respondió ${res.status}; ${apagar ? 'desde ahora sigo' : 'esta llamada va'} por /chat/completions. Detalle: ${txt.slice(0, 300)}`)
+            return this.llamar(rol, partidaId, cuerpo, true)
           }
           throw new Error(`OpenAI ${res.status}: ${txt.slice(0, 400)}`)
         }
-        const json = this.responses ? deResponses(JSON.parse(txt)) : JSON.parse(txt)
+        if (usaResponses) this.errores400 = 0
+        const json = usaResponses ? deResponses(JSON.parse(txt)) : JSON.parse(txt)
         const u = json.usage ?? {}
         const uso = {
           tok_in: u.prompt_tokens ?? u.input_tokens ?? 0,
@@ -214,7 +220,12 @@ export function aResponses(modelo: string, c: Record<string, any>): Record<strin
   }
   if (Array.isArray(c.tools)) body.tools = c.tools.map((t: any) => ({ type: 'function', name: t.function.name, description: t.function.description, parameters: t.function.parameters }))
   if (c.tool_choice) body.tool_choice = typeof c.tool_choice === 'string' ? c.tool_choice : { type: 'function', name: c.tool_choice.function?.name }
-  if (c.response_format?.type === 'json_object') body.text = { format: { type: 'json_object' } }
+  if (c.response_format?.type === 'json_object') {
+    body.text = { format: { type: 'json_object' } }
+    // /responses exige la palabra "json" en los mensajes de entrada (no alcanza con que esté en las instrucciones).
+    const input = body.input as { role: string; content: string }[]
+    if (!input.some((m) => /json/i.test(m.content))) input.push({ role: 'user', content: 'Respondé solo con JSON válido.' })
+  }
   return body
 }
 
