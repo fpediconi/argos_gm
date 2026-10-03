@@ -431,3 +431,19 @@ test('aviso privado de turno: novedades, escena y cómo jugar (sin IA)', async (
   const tarjeta = limpio(m.api.msgs.find((x) => x.id === p.turno_msg_id)!.html)
   assert.match(tarjeta, /¿Consiguen la válvula\?/)
 })
+
+test('medios: "planta de transmisión" no es una voz por radio; "una voz sale del altavoz" sí', async () => {
+  const { MEDIOS } = await import('../src/motor/canon.js')
+  assert.equal(MEDIOS.test('Llegan a la vieja planta de transmisión.'), false)
+  assert.equal(MEDIOS.test('Una voz sale del parlante oxidado.'), true)
+  assert.equal(MEDIOS.test('La radio crepita con un anuncio.'), true)
+})
+
+test('asegurar: si la mesa no sabe quién es el antagonista, el Brief lo pide (sin traerlo en persona)', async () => {
+  const { asegurarEsteTurno } = await import('../src/motor/canon.js')
+  const m = mundoVacio()
+  sembrarCanon(m, guion())
+  assert.ok(asegurarEsteTurno(m, 'escalada', 0.3).some((x) => /quién es Varela/.test(x)))
+  marcarApariciones(m, 'Los hombres de Varela cerraron el puerto.', 4)
+  assert.ok(!asegurarEsteTurno(m, 'escalada', 0.3).some((x) => /Varela/.test(x)))
+})

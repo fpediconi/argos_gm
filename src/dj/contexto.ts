@@ -4,10 +4,10 @@ import { claveJugador } from '../motor/estado.js'
 import { saludMaxEfectiva } from '../motor/personaje.js'
 import { PROMPT_DJ, textoViolencia } from './prompts.js'
 import { vivos } from '../motor/combate.js'
-import { actoActual, bloqueRitmo, faseDe, FASES } from '../motor/ritmo.js'
+import { actoActual, bloqueRitmo, faseDe, FASES, progreso, totalCapitulos } from '../motor/ritmo.js'
 import { siguienteJugador } from '../motor/turnos.js'
 import {
-  actoPorHitos, beatQueToca, escenaDe, evitarEsteTurno, fueraDeEscena, hilosAbiertos, hilosOlvidados, narrativaDe, pideCorte,
+  actoPorHitos, asegurarEsteTurno, beatQueToca, escenaDe, evitarEsteTurno, fueraDeEscena, hilosAbiertos, hilosOlvidados, narrativaDe, pideCorte,
   presentes, presupuestoNuevos, topeHilos,
 } from '../motor/canon.js'
 
@@ -81,6 +81,16 @@ export function estadoParaFinal(p: Partida, pjs: Personaje[]): string {
   partes.push(`personajes en pie: ${pjs.filter((x) => x.vivo).map((x) => x.ficha.nombre).join(', ') || 'ninguno'}`)
   if (m.decisiones?.length) partes.push(`decisiones del grupo: ${m.decisiones.slice(-3).join('; ')}`)
   return partes.join(' · ')
+}
+
+/**
+ * Cada cuántos turnos puede tocarle un beat de arco a un mismo personaje: los 3 beats se reparten en toda la historia
+ * (en un one-shot, cada ~5 turnos; en una mini-campaña, cada ~15).
+ */
+export function espacioBeats(p: Partida): number {
+  const r = p.mundo.ritmo
+  const caps = totalCapitulos(p.config) || 3
+  return Math.max(4, Math.round(((r?.objetivo ?? 12) * caps) / 4))
 }
 
 /** ¿Puede jugar este personaje? (los que entraron tarde esperan al próximo cambio de escena). */
@@ -198,7 +208,7 @@ export function sistemaTurno(ctx: Ctx, partida: Partida, pjs: Personaje[], jugad
     : 'NPC EN ESCENA: nadie (los personajes están solos).')
   const fuera = fueraDeEscena(m, turno)
   if (fuera.length) {
-    est.push(`FUERA DE ESCENA (existen, no aparecen ni hablan): ${fuera.map((x) => {
+    est.push(`FUERA DE ESCENA (no hablan ahora; traerlos a la escena es gratis): ${fuera.map((x) => {
       const a = x.agenda
       const plan = a && a.hechos < a.pasos.length ? ` — próximo paso de su plan: ${a.pasos[a.hechos]}` : ''
       return `${x.nombre}${x.rol ? ` [${x.rol}]` : ''}${plan}`
@@ -215,8 +225,10 @@ export function sistemaTurno(ctx: Ctx, partida: Partida, pjs: Personaje[], jugad
   est.push(`PRESUPUESTO: fase ${FASES[fase].nombre.toUpperCase()} · ${resto > 0 ? `podés presentar ${resto} elemento nuevo (NPC con nombre, lugar, facción o misterio), anclado a algo que ya existe` : 'NO presentes NPC, lugares, facciones ni misterios nuevos: usá los que ya existen'}.`)
   const evitar = evitarEsteTurno(m, turno, fase)
   if (evitar.length) est.push(`EVITAR ESTE TURNO:\n${evitar.map((x) => `  · ${x}`).join('\n')}`)
+  const asegurar = r ? asegurarEsteTurno(m, fase, progreso(r)) : []
+  if (asegurar.length) est.push(`ASEGURÁ PRONTO:\n${asegurar.map((x) => `  · ${x}`).join('\n')}`)
 
-  const arco = r && !m.combate && !r.eventoPendiente ? beatQueToca(m, pjs, jugadores, op.turnoPj, turno) : null
+  const arco = r && !m.combate && !r.eventoPendiente ? beatQueToca(m, pjs, jugadores, op.turnoPj, turno, espacioBeats(partida)) : null
   if (arco) est.push(`OPORTUNIDAD DE ARCO PERSONAL (${arco.pj.ficha.nombre}, ${arco.beat.tipo}): ${arco.beat.texto} Si lo jugás, marcá "beat_jugado": "${claveJugador(arco.pj)}".`)
 
   if (m.relojes.length) est.push(`Relojes: ${m.relojes.map((x) => `${x.nombre} ${x.llenos}/${x.segmentos}${x.llenos >= x.segmentos ? ' (¡LLENO!)' : ''}`).join(' | ')}`)

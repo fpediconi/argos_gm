@@ -4,7 +4,7 @@ import type { SalidaNarrar } from '../dj/cerebro.js'
 import { ErrorPresupuesto, clasificarAccionCombate, clasificarIntencion, decidirTurno, epilogo, recomprimirResumen, resumenCapitulo, transmisionRadio } from '../dj/servicios.js'
 import { aplicarNarrativa, despedida, migrarCanon, nuevaRondaNarrativa, ofrecerFinal, prepararEscena, reconciliarSalida, registrarHecho } from './narrativa.js'
 import { beatQueToca, contarMencionJugador, eventoDesdeEstado, narrativaDe } from '../motor/canon.js'
-import { pjHabilitado } from '../dj/contexto.js'
+import { espacioBeats, pjHabilitado } from '../dj/contexto.js'
 import { aplicarCambios, buscarPj, claveJugador, esNpcMuerto, marcarNpcMuerto, npcsVivos } from '../motor/estado.js'
 import { esCaido, suerteMax } from '../motor/personaje.js'
 import { armaPrincipal, resolverPrueba, tnDe, type Extra } from '../motor/reglas.js'
@@ -738,7 +738,7 @@ async function programarEvento(ctx: Ctx, partida: Partida): Promise<void> {
   // Primero, lo que pide el estado: un hito atrasado, un hilo olvidado o el arco de quien tiene menos foco.
   const pjs = ctx.db.personajesVivos(partida.id)
   const jugadores = ctx.db.jugadores(partida.id)
-  const delEstado = eventoDesdeEstado(partida.mundo, g, { actoPorRitmo: actoActual(partida), turno: partida.turno_n, arco: beatQueToca(partida.mundo, pjs, jugadores, undefined, partida.turno_n) })
+  const delEstado = eventoDesdeEstado(partida.mundo, g, { actoPorRitmo: actoActual(partida), turno: partida.turno_n, arco: beatQueToca(partida.mundo, pjs, jugadores, undefined, partida.turno_n, espacioBeats(partida)) })
   if (delEstado) {
     r.eventoPendiente = delEstado.instruccion
     registrar(ctx, partida, null, 'sistema', `Evento programado: ${delEstado.motivo}.`)

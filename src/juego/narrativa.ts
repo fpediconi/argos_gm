@@ -262,7 +262,7 @@ export function nuevaRondaNarrativa(ctx: Ctx, partida: Partida, pjs: Personaje[]
   const logro = avanzarAgendas(m)
   if (logro) {
     registrarHecho(ctx, partida, `${logro.quien} logró: ${logro.paso}`, { vis: 'dj', fuente: 'motor' })
-    const instr = `LA AGENDA DE ${logro.quien.toUpperCase()} AVANZA: logró "${logro.paso}"${logro.final ? ' (era su último paso: su plan se cumplió)' : ''}. Mostrá la CONSECUENCIA a la vista del grupo (algo que cambió en el mundo), no a ${logro.quien} hablando.`
+    const instr = `LA AGENDA DE ${logro.quien.toUpperCase()} AVANZA: logró "${logro.paso}"${logro.final ? ' (era su último paso: su plan se cumplió)' : ''}. Mostrá la CONSECUENCIA a la vista del grupo (algo que cambió en el mundo) y que se sepa que fue obra de ${logro.quien} (una marca, un testigo, sus hombres), sin que aparezca hablando.`
     const r = m.ritmo
     if (r && !r.eventoPendiente && !r.cierrePendiente) {
       r.eventoPendiente = instr

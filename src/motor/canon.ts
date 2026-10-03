@@ -174,7 +174,8 @@ export function contarMencionJugador(m: Mundo, texto: string): NpcActivo[] {
 
 // ------------------------------------------------------------------ dosificación y anti-muletillas
 
-export const MEDIOS = /(radio|altavoz|altavoces|altoparlante|meg[aá]fono|parlante|transmisi[oó]n|intercomunicador|holocinta|grabaci[oó]n|walkie|interfono|bocina|pantalla gigante|emisora|frecuencia)/i
+/** Voces a distancia (la muletilla de "el villano habla por el altavoz"). Frases, no palabras sueltas: una "planta de transmisión" no cuenta. */
+export const MEDIOS = /(altavoz|altavoces|altoparlantes?|meg[aá]fonos?|parlantes?|intercomunicador|walkie|interfono|holocinta|pantalla gigante|por (?:la|una|el) (?:radio|transmisor|frecuencia)|desde (?:la|una) radio|la radio (?:crepita|escupe|anuncia|dice|suena|vuelve|chilla|cruje)|una voz (?:sale|brota|crepita|llega|suena|retumba|resuena) (?:de|por|desde)|una transmisi[oó]n (?:interrumpe|corta|anuncia|dice)|transmite (?:un|una|el|la)|la grabaci[oó]n (?:dice|suena|repite|sigue))/i
 const ENFRIAMIENTO_MEDIOS = 4
 const ENFRIAMIENTO_RECURSO = 3
 
@@ -201,7 +202,7 @@ export function evitarEsteTurno(m: Mundo, turno: number, fase: Fase): string[] {
     if (enEscena.has(a.id)) continue
     const ap = n.apariciones[a.id] ?? []
     const reciente = ap.some((t) => t >= turno - 3)
-    if (fase !== 'giro' && fase !== 'climax') l.push(`que ${a.nombre} aparezca o hable en persona (actúa por sus agentes y por consecuencias visibles)`)
+    if (fase !== 'giro' && fase !== 'climax') l.push(`que ${a.nombre} aparezca o hable en persona (actúa por sus agentes y por consecuencias visibles; nombrarlo sí está bien)`)
     else if (reciente) l.push(`que ${a.nombre} vuelva a hablar (apareció hace poco)`)
   }
   if (n.medios !== undefined && turno - n.medios < ENFRIAMIENTO_MEDIOS) l.push('voces a distancia: radios, altavoces, megáfonos, transmisiones o grabaciones (se usaron hace poco)')
@@ -212,6 +213,18 @@ export function evitarEsteTurno(m: Mundo, turno: number, fase: Fase): string[] {
     const ap = n.apariciones[npc.id] ?? []
     if (npc.rol !== 'antagonista' && ap.filter((t) => t >= turno - 4).length >= 3) l.push(`que ${npc.nombre} hable otra vez (estuvo en los últimos turnos: que actúe otro o que calle)`)
   }
+  return l
+}
+
+/** Lo que la historia necesita y todavía no tiene: por ejemplo, que la mesa sepa quién es el antagonista antes del giro. */
+export function asegurarEsteTurno(m: Mundo, fase: Fase, progreso: number): string[] {
+  const l: string[] = []
+  for (const a of antagonistas(m)) {
+    if (a.conocido) continue
+    if (fase !== 'planteo' || progreso >= 0.15) l.push(`la mesa todavía no sabe quién es ${a.nombre}: que alguien lo nombre, que sus agentes digan para quién trabajan o que una consecuencia lleve su marca (sin que aparezca en persona)`)
+  }
+  const delGuion = m.npcs.filter((n) => n.peso === 'principal' && n.rol !== 'antagonista' && !n.conocido && n.estado !== 'muerto')
+  if (delGuion.length && fase === 'escalada') l.push(`hay NPC del guion que todavía no aparecieron (${delGuion.map((n) => n.nombre).join(', ')}): traé alguno si encaja, antes que inventar gente nueva`)
   return l
 }
 
@@ -364,12 +377,12 @@ export function asegurarArcos(m: Mundo, pjs: Personaje[], g: GuionMaestro | null
 }
 
 /** El beat que toca: del PJ del turno si hace rato no tiene uno, o del que menos foco tiene. */
-export function beatQueToca(m: Mundo, pjs: Personaje[], jugadores: Jugador[], turnoPj: Personaje | undefined, turno: number): { pj: Personaje; beat: Beat } | null {
+export function beatQueToca(m: Mundo, pjs: Personaje[], jugadores: Jugador[], turnoPj: Personaje | undefined, turno: number, espacio = 4): { pj: Personaje; beat: Beat } | null {
   const arcos = m.arcos ?? []
   const pendiente = (p: Personaje) => {
     const a = arcos.find((x) => x.pj === p.id)
     if (!a || a.definiendo) return null
-    if (a.ultimo !== undefined && turno - a.ultimo < 4) return null
+    if (a.ultimo !== undefined && turno - a.ultimo < espacio) return null
     const b = a.beats.find((x) => x.estado === 'pendiente')
     return b ? { pj: p, beat: b } : null
   }

@@ -72,7 +72,8 @@ const p = m.ctx.db.partida(pid)!
 const mundo = p.mundo
 const n = mundo.narrativa!
 const ants = mundo.npcs.filter((x) => x.rol === 'antagonista')
-const fueraDeLugar = narraciones.filter((x) => x.fase !== 'giro' && x.fase !== 'climax' && ants.some((a) => menciona(x.texto, a.nombre))).length
+const antesDelGiro = narraciones.filter((x) => x.fase !== 'giro' && x.fase !== 'climax')
+const nombradoAntes = antesDelGiro.filter((x) => ants.some((a) => menciona(x.texto, a.nombre))).length
 const medios = narraciones.filter((x) => MEDIOS.test(x.texto)).length
 const conteo = mundo.npcs.map((x) => ({ nombre: x.nombre, veces: narraciones.filter((y) => menciona(y.texto, x.nombre)).length })).sort((a, b) => b.veces - a.veces)
 const totalMenciones = conteo.reduce((s, x) => s + x.veces, 0) || 1
@@ -85,9 +86,12 @@ const linea = (ok: boolean, txt: string) => console.log(`${ok ? '✅' : '⚠️ 
 console.log(`📖 «${p.guion?.titulo}» — ${narraciones.length} narraciones en ${TURNOS} turnos · Gasto ~US$ ${gasto.toFixed(4)}\n`)
 linea((n.contradicciones ?? 0) / Math.max(1, narraciones.length) < 0.1, `Contradicciones detectadas: ${n.contradicciones ?? 0} (${n.auditorias ?? 0} narraciones auditadas, ${n.reparaciones ?? 0} reparadas)`)
 for (const r of reparaciones) console.log(`     · ${r.replace(/^reparando narración \(partida \d+\): /, '')}`)
-linea(fueraDeLugar / Math.max(1, narraciones.length) <= 0.15, `Antagonista en escena fuera del giro/clímax: ${fueraDeLugar} de ${narraciones.length} (${pct(fueraDeLugar, narraciones.length)}, meta ≤ 15%)`)
+linea(!ants.length || (nombradoAntes >= 1 && nombradoAntes / Math.max(1, antesDelGiro.length) <= 0.35), `Antagonista nombrado antes del giro: en ${nombradoAntes} de ${antesDelGiro.length} narraciones (meta: que se sepa quién es, sin estar en más del 35%)`)
 linea(medios <= Math.ceil(narraciones.length / 8), `Radios, altavoces y transmisiones: ${medios} (meta ≤ 1 cada 8)`)
-linea((conteo[0]?.veces ?? 0) / totalMenciones <= 0.4, `NPC más presente: ${conteo[0]?.nombre ?? '-'} con ${pct(conteo[0]?.veces ?? 0, totalMenciones)} de las menciones (meta ≤ 40%)`)
+const delGuion = mundo.npcs.filter((x) => x.peso === 'principal')
+const aparecieron = delGuion.filter((x) => conteo.find((c) => c.nombre === x.nombre)?.veces)
+linea(totalMenciones < 8 || (conteo[0]?.veces ?? 0) / totalMenciones <= 0.4, `NPC más presente: ${conteo[0]?.nombre ?? '-'} con ${pct(conteo[0]?.veces ?? 0, totalMenciones)} de ${totalMenciones} menciones (meta ≤ 40%; con menos de 8 menciones no se juzga)`)
+linea(aparecieron.length >= Math.min(3, delGuion.length), `NPC del guion que aparecieron: ${aparecieron.length} de ${delGuion.length} (${delGuion.map((x) => `${x.nombre}${aparecieron.includes(x) ? ' ✓' : ''}`).join(', ')})`)
 console.log(`   NPC: ${conteo.filter((x) => x.veces).map((x) => `${x.nombre} ${x.veces}`).join(' · ')}`)
 linea(true, `Elementos nuevos presentados: ${n.nuevos.length} (${n.nuevos.map((x) => x.que).join(', ') || '-'})`)
 const abiertos = (mundo.hilos ?? []).filter((h) => h.estado === 'abierto')
